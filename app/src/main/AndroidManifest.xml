@@ -84,28 +84,6 @@
                 <data android:pathPattern=".*\\..*\\..*\\..*\\..*\\..*\\.GED" />
                 <data android:pathPattern=".*\\..*\\..*\\..*\\..*\\..*\\..*\\.GED" />
             </intent-filter>
-            <intent-filter>
-                <action android:name="android.intent.action.VIEW" />
-
-                <category android:name="android.intent.category.DEFAULT" />
-                <category android:name="android.intent.category.BROWSABLE" />
-
-                <data
-                    android:host="www.familygem.app"
-                    android:path="/share.php"
-                    android:scheme="https" />
-            </intent-filter>
-            <intent-filter>
-                <action android:name="android.intent.action.VIEW" />
-
-                <category android:name="android.intent.category.DEFAULT" />
-                <category android:name="android.intent.category.BROWSABLE" />
-
-                <data
-                    android:host="www.familygem.app"
-                    android:pathPattern="/condivisi/.*.zip"
-                    android:scheme="https" />
-            </intent-filter>
         </activity>
         <activity
             android:name=".TreesActivity"

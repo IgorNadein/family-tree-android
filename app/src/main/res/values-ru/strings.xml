@@ -1,5 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
+    <string name="app_name">Семейное древо</string>
     <string name="sharing_completed">Отправка завершена.</string>
     <string name="sharing_tree">Совместное использование семейного дерева</string>
     <string name="shares">Совместное использование</string>
