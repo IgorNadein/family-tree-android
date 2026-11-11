@@ -1,6 +1,5 @@
 package app.familygem.ui
 
-import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -34,9 +33,7 @@ fun TreeRowCard(
     title: String,
     details: String,
     derived: Boolean,
-    exhausted: Boolean,
-    onOpen: () -> Unit,
-    onLongPress: () -> Unit
+    exhausted: Boolean
 ) {
     FamilyTreeTheme {
         val scheme = MaterialTheme.colorScheme
@@ -49,9 +46,6 @@ fun TreeRowCard(
         Card(
             modifier = Modifier
                 .fillMaxWidth()
-                // ComposeView intercepts taps: forward them to the existing
-                // tree row handler so opening and drag-to-reorder still work.
-                .combinedClickable(onClick = onOpen, onLongClick = onLongPress)
                 .padding(start = 10.dp, end = 10.dp, top = 6.dp, bottom = 6.dp),
             shape = androidx.compose.foundation.shape.RoundedCornerShape(20.dp),
             colors = CardDefaults.cardColors(containerColor = surface),

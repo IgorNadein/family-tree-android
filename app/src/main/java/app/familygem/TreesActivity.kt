@@ -127,9 +127,7 @@ class TreesActivity : AppCompatActivity() {
                         title = tree.title,
                         details = treeList[position]["data"].orEmpty(),
                         derived = derived,
-                        exhausted = exhausted,
-                        onOpen = { treeView.performClick() },
-                        onLongPress = { treeView.performLongClick() }
+                        exhausted = exhausted
                     )
                 }
                 if (derived) {
