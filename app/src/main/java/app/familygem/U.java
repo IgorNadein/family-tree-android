@@ -864,14 +864,27 @@ public class U {
                 return true;
             }
         }
-        // Child: there is already a family with or without children
-        else if (relation == Relation.CHILD && spouseFamilies.size() == 1) {
-            intent.putExtra(Extra.FAMILY_ID, spouseFamilies.get(0).getId());
-        } // Child: there are many spouse families
-        else if (relation == Relation.CHILD && spouseFamilies.size() > 1) {
+        // Always ask when a parent has an existing family. Even with one
+        // marriage it may be a deceased former partner: the new child must
+        // not silently inherit that person as a biological father.
+        else if (relation == Relation.CHILD && !spouseFamilies.isEmpty()) {
+            // Explicitly show each couple, never automatically infer the
+            // child's father from the first/previous marriage.
+            for (Family family : spouseFamilies)
+                adapter.add(new NewRelativeDialog.FamilyItem(context, family, true));
+            // A child may also have only one known parent.
+            adapter.add(new NewRelativeDialog.FamilyItem(context, pivot));
             new AlertDialog.Builder(context).setTitle(R.string.which_family_add_child)
-                    .setItems(FamilyUtil.INSTANCE.listFamilies(spouseFamilies), (dialog, quale) -> {
-                        intent.putExtra(Extra.FAMILY_ID, spouseFamilies.get(quale).getId());
+                    .setAdapter(adapter, (dialog, choice) -> {
+                        NewRelativeDialog.FamilyItem selected = adapter.getItem(choice);
+                        if (selected == null) return;
+                        if (selected.family != null) {
+                            intent.putExtra(Extra.FAMILY_ID, selected.family.getId());
+                            intent.removeExtra(Extra.DESTINATION);
+                        } else {
+                            intent.removeExtra(Extra.FAMILY_ID);
+                            intent.putExtra(Extra.DESTINATION, "NEW_FAMILY_OF" + pivot.getId());
+                        }
                         concludeMultiMarriages(context, intent, fragment);
                     }).show();
             return true;

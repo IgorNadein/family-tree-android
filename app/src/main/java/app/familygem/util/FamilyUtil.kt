@@ -123,6 +123,13 @@ object FamilyUtil {
         return builder.trimEnd { it == divider || it == ',' }.toString()
     }
 
+    /** Label only the parents, not unrelated children or former partners. */
+    fun writeParents(context: Context, gedcom: Gedcom, family: Family): String {
+        val names = family.getSpouses(gedcom).map { U.properName(it) }.filter { it.isNotBlank() }
+        return if (names.isEmpty()) context.getString(R.string.unknown_parents)
+        else names.joinToString(" + ")
+    }
+
     /** Connects a person to a family as parent or child. */
     fun linkPerson(person: Person, family: Family, relation: Relation) {
         when (relation) {

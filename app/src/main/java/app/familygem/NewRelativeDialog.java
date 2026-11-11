@@ -8,6 +8,8 @@ import android.view.View;
 import android.widget.ArrayAdapter;
 import android.widget.RadioButton;
 import android.widget.Spinner;
+import android.widget.AdapterView;
+import android.widget.TextView;
 
 import androidx.annotation.Keep;
 import androidx.annotation.NonNull;
@@ -29,6 +31,7 @@ import app.familygem.main.DiagramFragment;
 import app.familygem.main.MainActivity;
 import app.familygem.profile.ProfileActivity;
 import app.familygem.util.FamilyUtil;
+import app.familygem.relationships.ChildFamilySelectionPolicy;
 
 /**
  * Dialog to connect a relative (parent, sibling, partner or child) to a person in expert mode,
@@ -78,6 +81,14 @@ public class NewRelativeDialog extends DialogFragment {
         ArrayAdapter<FamilyItem> adapter = new ArrayAdapter<>(requireContext(), android.R.layout.simple_spinner_item);
         adapter.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item);
         spinner.setAdapter(adapter);
+        spinner.setOnItemSelectedListener(new AdapterView.OnItemSelectedListener() {
+            @Override public void onItemSelected(AdapterView<?> parent, View selectedView, int position, long id) {
+                validateSelection();
+            }
+            @Override public void onNothingSelected(AdapterView<?> parent) {
+                validateSelection();
+            }
+        });
         ((View)spinner.getParent()).setVisibility(View.GONE); // Initially the spinner is hidden
 
         RadioButton role1 = view.findViewById(R.id.newRelative_parent);
@@ -103,6 +114,7 @@ public class NewRelativeDialog extends DialogFragment {
             intent.putExtra(Extra.PERSON_ID, pivot.getId());
             intent.putExtra(Extra.RELATION, relation);
             FamilyItem familyItem = (FamilyItem)spinner.getSelectedItem();
+            if (familyItem == null || familyItem.placeholder) return;
             if (familyItem.family != null)
                 intent.putExtra(Extra.FAMILY_ID, familyItem.family.getId());
             else if (familyItem.parent != null) // We use DESTINATION to convey the parent's ID (the third actor in the scene)
@@ -205,18 +217,28 @@ public class NewRelativeDialog extends DialogFragment {
                 if (select < 0) select = options.size() - 1; // Selects "New family of..."
                 break;
             case CHILD:
-                for (Family family : pivot.getSpouseFamilies(Global.gc)) {
-                    addOption(new FamilyItem(getContext(), family));
+                List<Family> spouseFamilies = pivot.getSpouseFamilies(Global.gc);
+                boolean hasPreferred = prefSpouseFamily != null && spouseFamilies.contains(prefSpouseFamily);
+                if (ChildFamilySelectionPolicy.requiresChoice(spouseFamilies.size(), hasPreferred)) {
+                    // A Spinner selects its first item automatically: use a
+                    // non-actionable prompt, not the first (possibly deceased) spouse.
+                    addOption(new FamilyItem(getContext()));
                 }
+                for (Family family : spouseFamilies)
+                    addOption(new FamilyItem(getContext(), family, true));
+                // Unknown father / another marriage: make a fresh family of
+                // the parent, without assigning any previous spouse as father.
                 addOption(new FamilyItem(getContext(), pivot));
-                // Selects the preferred family (if any), otherwise the first one
                 select = 0;
-                for (FamilyItem item : options) {
-                    if (item.family != null && item.family.equals(prefSpouseFamily)) {
-                        select = options.indexOf(item);
-                        break;
+                if (hasPreferred) {
+                    for (int i = 0; i < options.size(); i++) {
+                        if (prefSpouseFamily.equals(options.get(i).family)) {
+                            select = i;
+                            break;
+                        }
                     }
                 }
+                break;
         }
         if (!newPerson) {
             addOption(new FamilyItem(getContext(), true));
@@ -225,8 +247,18 @@ public class NewRelativeDialog extends DialogFragment {
         adapter.clear();
         adapter.addAll(options);
         ((View)spinner.getParent()).setVisibility(View.VISIBLE);
+        TextView label = ((View)spinner.getParent()).findViewById(R.id.newRelative_family_label);
+        if (label != null) label.setText(relation == Relation.CHILD
+                ? R.string.child_parent_choice_label : R.string.into);
         spinner.setSelection(select);
-        dialog.getButton(AlertDialog.BUTTON_POSITIVE).setEnabled(true);
+        validateSelection();
+    }
+
+    private void validateSelection() {
+        if (dialog == null || dialog.getButton(AlertDialog.BUTTON_POSITIVE) == null) return;
+        FamilyItem choice = (FamilyItem)spinner.getSelectedItem();
+        dialog.getButton(AlertDialog.BUTTON_POSITIVE)
+                .setEnabled(relation != null && choice != null && !choice.placeholder);
     }
 
     private void addOption(FamilyItem item) {
@@ -241,13 +273,25 @@ public class NewRelativeDialog extends DialogFragment {
         Family family;
         Person parent;
         boolean existing; // Pivot will try to join the already existing family
+        boolean placeholder;
+        boolean parentsOnly;
+
+        FamilyItem(Context context) {
+            this.context = context;
+            this.placeholder = true;
+        }
 
         /**
          * Existing family.
          */
         FamilyItem(Context context, Family family) {
+            this(context, family, false);
+        }
+
+        FamilyItem(Context context, Family family, boolean parentsOnly) {
             this.context = context;
             this.family = family;
+            this.parentsOnly = parentsOnly;
         }
 
         /**
@@ -270,7 +314,8 @@ public class NewRelativeDialog extends DialogFragment {
         public boolean equals(Object obj) {
             if (obj instanceof FamilyItem) {
                 FamilyItem that = (FamilyItem)obj;
-                return existing == that.existing && Objects.equals(family, that.family) && Objects.equals(parent, that.parent);
+                return placeholder == that.placeholder && existing == that.existing
+                        && Objects.equals(family, that.family) && Objects.equals(parent, that.parent);
             }
             return false;
         }
@@ -278,8 +323,12 @@ public class NewRelativeDialog extends DialogFragment {
         @NonNull
         @Override
         public String toString() {
+            if (placeholder)
+                return context.getString(R.string.select_parents_for_child);
             if (family != null)
-                return FamilyUtil.INSTANCE.writeMembers(context, Global.gc, family, false);
+                return parentsOnly
+                        ? FamilyUtil.INSTANCE.writeParents(context, Global.gc, family)
+                        : FamilyUtil.INSTANCE.writeMembers(context, Global.gc, family, false);
             else if (parent != null)
                 return context.getString(R.string.new_family_of, U.properName(parent));
             else if (existing)

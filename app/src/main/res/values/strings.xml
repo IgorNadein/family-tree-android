@@ -425,4 +425,7 @@
     <string name="update_playstore">Please update Play Store app.</string>
     <string name="year">Year</string>
     <string name="next">Next</string>
+    <string name="select_parents_for_child">Choose parents for this child…</string>
+    <string name="child_parent_choice_label">Parents of this child</string>
+    <string name="unknown_parents">Parents not specified</string>
 </resources>

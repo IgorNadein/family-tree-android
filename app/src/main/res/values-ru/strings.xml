@@ -419,4 +419,7 @@
     <string name="copy_app_storage">Копировать в хранилище приложения</string>
     <string name="existing_name">Уже существующее название</string>
     <string name="invalid_name">Недействительное название</string>
+    <string name="select_parents_for_child">Выберите родителей ребёнка…</string>
+    <string name="child_parent_choice_label">Родители этого ребёнка</string>
+    <string name="unknown_parents">Родители не указаны</string>
 </resources>
