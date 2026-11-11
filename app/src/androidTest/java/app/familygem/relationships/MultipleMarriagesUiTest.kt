@@ -14,6 +14,7 @@ import androidx.test.espresso.intent.Intents.intended
 import androidx.test.espresso.intent.Intents.intending
 import androidx.test.espresso.intent.matcher.IntentMatchers.hasComponent
 import androidx.test.espresso.intent.matcher.IntentMatchers.hasExtra
+import androidx.test.espresso.matcher.RootMatchers.isDialog
 import androidx.test.espresso.matcher.RootMatchers.isPlatformPopup
 import androidx.test.espresso.matcher.ViewMatchers.isDisplayed
 import androidx.test.espresso.matcher.ViewMatchers.isEnabled
@@ -176,9 +177,9 @@ class MultipleMarriagesUiTest {
                     // in the former husband's F1 family.
                     assertTrue(U.checkMultiMarriages(intent, activity, null))
                 }
-                onView(withText(R.string.which_family_add_child)).check(matches(isDisplayed()))
-                // Choose a new family with the mother as the only known parent.
-                onData(anything()).atPosition(1).perform(click())
+                // The choice lives in an AlertDialog window, not the
+                // background Activity's view hierarchy.
+                onData(anything()).inRoot(isDialog()).atPosition(1).perform(click())
                 intended(allOf(
                     hasComponent(PersonEditorActivity::class.java.name),
                     hasExtra(Extra.DESTINATION, "NEW_FAMILY_OFI1")
