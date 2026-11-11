@@ -22,7 +22,6 @@ import androidx.core.net.toUri
 import androidx.lifecycle.lifecycleScope
 import app.familygem.databinding.NewTreeActivityBinding
 import app.familygem.util.FileUtil
-import app.familygem.ui.showCreateTreeDialog
 import app.familygem.util.TreeUtil
 import kotlinx.coroutines.Dispatchers.IO
 import kotlinx.coroutines.Dispatchers.Main
@@ -59,7 +58,28 @@ class NewTreeActivity : BaseActivity(R.string.new_tree) {
             emptyTree.backgroundTintList = ColorStateList.valueOf(ContextCompat.getColor(this, R.color.primary_light))
         }
         emptyTree.setOnClickListener {
-            showCreateTreeDialog(::createNewTree)
+            val dialogView = LayoutInflater.from(this).inflate(R.layout.tree_title_dialog, null)
+            val builder = AlertDialog.Builder(this)
+            builder.setView(dialogView).setTitle(R.string.title)
+            val suggestion = dialogView.findViewById<TextView>(R.id.treeTitle_suggestion)
+            suggestion.setText(R.string.modify_later)
+            suggestion.visibility = View.VISIBLE
+            val editTitle = dialogView.findViewById<EditText>(R.id.treeTitle_edit)
+            builder.setPositiveButton(R.string.create) { _, _ -> createNewTree(editTitle.text.toString().trim()) }
+                .setNeutralButton(R.string.cancel, null).create().show()
+            // Intercepts the DONE button on the keyboard
+            editTitle.setOnEditorActionListener { _, action, _ ->
+                if (action == EditorInfo.IME_ACTION_DONE) {
+                    createNewTree(editTitle.text.toString().trim())
+                    return@setOnEditorActionListener true // Completes saving actions
+                }
+                false // Any other action (which don't exist)
+            }
+            dialogView.postDelayed({
+                editTitle.requestFocus()
+                val inputMethodManager = getSystemService(INPUT_METHOD_SERVICE) as InputMethodManager
+                inputMethodManager.showSoftInput(editTitle, InputMethodManager.SHOW_IMPLICIT)
+            }, 300)
         }
 
         // Downloads the Simpsons example tree

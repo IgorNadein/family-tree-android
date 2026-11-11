@@ -24,13 +24,11 @@ import androidx.appcompat.app.AppCompatActivity
 import androidx.appcompat.widget.PopupMenu
 import androidx.appcompat.widget.Toolbar
 import androidx.core.content.res.ResourcesCompat
-import androidx.compose.ui.platform.ComposeView
 import androidx.core.net.toUri
 import androidx.core.view.updateLayoutParams
 import androidx.core.view.updatePadding
 import androidx.lifecycle.lifecycleScope
 import app.familygem.constant.Extra
-import app.familygem.ui.TreeRowCard
 import app.familygem.constant.FileType
 import app.familygem.main.MainActivity
 import app.familygem.merge.MergeActivity
@@ -122,15 +120,8 @@ class TreesActivity : AppCompatActivity() {
                 val tree = Global.settings.getTree(treeId)
                 val derived = tree.grade == 20
                 val exhausted = tree.grade == 30
-                treeView.findViewById<ComposeView>(R.id.tree_card_compose).setContent {
-                    TreeRowCard(
-                        title = tree.title,
-                        details = treeList[position]["data"].orEmpty(),
-                        derived = derived,
-                        exhausted = exhausted
-                    )
-                }
                 if (derived) {
+                    treeLayout.setBackgroundColor(ResourcesCompat.getColor(resources, R.color.accent_medium, null))
                     detailView.setTextColor(ResourcesCompat.getColor(resources, R.color.text, null))
                     treeView.setOnClickListener {
                         if (!TreeUtil.compareTrees(this@TreesActivity, tree, true)) {
@@ -141,6 +132,7 @@ class TreesActivity : AppCompatActivity() {
                         }
                     }
                 } else if (exhausted) {
+                    treeLayout.setBackgroundColor(ResourcesCompat.getColor(resources, R.color.consumed, null))
                     titleView.setTextColor(ResourcesCompat.getColor(resources, R.color.gray_text, null))
                     treeView.setOnClickListener {
                         if (!TreeUtil.compareTrees(this@TreesActivity, tree, true)) {
@@ -151,6 +143,7 @@ class TreesActivity : AppCompatActivity() {
                         }
                     }
                 } else {
+                    treeLayout.setBackgroundColor(ResourcesCompat.getColor(resources, R.color.back_element, null))
                     treeView.setOnClickListener {
                         progress.visibility = View.VISIBLE
                         if (Global.gc != null && treeId == Global.settings.openTree) { // Tree already opened
@@ -166,9 +159,7 @@ class TreesActivity : AppCompatActivity() {
                 }
                 treeLayout.visibility = if (treeId == draggedTreeId) View.INVISIBLE else View.VISIBLE
                 // Three dots button
-                val menuButton = treeView.findViewById<ImageButton>(R.id.tree_menu)
-                menuButton.contentDescription = "${getString(R.string.tree_actions_description)}: ${tree.title}"
-                menuButton.setOnClickListener { view: View ->
+                treeView.findViewById<ImageButton>(R.id.tree_menu).setOnClickListener { view: View ->
                     val exists = File(filesDir, "$treeId.json").exists()
                     val popup = PopupMenu(this@TreesActivity, view)
                     val menu = popup.menu

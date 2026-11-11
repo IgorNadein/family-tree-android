@@ -419,5 +419,4 @@
     <string name="copy_app_storage">Копировать в хранилище приложения</string>
     <string name="existing_name">Уже существующее название</string>
     <string name="invalid_name">Недействительное название</string>
-    <string name="tree_actions_description">Действия с семейным древом</string>
 </resources>
