@@ -9,11 +9,11 @@
 - `namespace = app.familygem` временно оставлен для совместимости с исходниками Kotlin/Java и сгенерированными классами. Это **не** package name устанавливаемого APK.
 - Видимое имя: «Семейное древо» (ru) / «Family Tree» (по умолчанию).
 - FileProvider использует `${applicationId}.provider`; deep links оригинального сайта Family Gem удалены.
-- Версия форка начинается с `0.1.0 (1)`, отдельно от версий Family Gem.
+- Версия форка: `0.1.1 (2)`, отдельно от версий Family Gem.
 
 ## Сборка
 
-Проект унаследован с Android Gradle Plugin 9.4.0, Kotlin Gradle Plugin 2.3.21 и compile SDK 37.2. Для сборки нужны совместимый Gradle и Android SDK. В исходном репозитории **нет Gradle wrapper**; для воспроизводимой сборки необходимо закрепить совместимую версию Gradle и добавить wrapper. На nadein-core установлена Java 21, но полноценный Android SDK/Gradle пока не настроен.
+Используется Android Gradle Plugin 9.4.0 со встроенной поддержкой Kotlin (без устаревшего `kotlin-android-extensions`). Gradle закреплён версией 9.6.0 в wrapper; для сборки требуются Java 17+ и Android SDK 37.2. На `nadein-core` применяем установленную Java 21. Путь к локально установленному Android SDK нужно указать через `ANDROID_HOME` либо `local.properties`; ни то ни другое не хранится в Git.
 
 Команды сборки после настройки инструментов:
 
@@ -21,6 +21,8 @@
 cd ~/Dev/family-tree-android
 ./gradlew :app:assembleDebug
 ```
+
+CI: `.github/workflows/android.yml` автоматически запускает тесты и собирает отладочный APK при push/PR в `master`. Артефакты доступны в GitHub Actions; они не заменяют подписанный релиз.
 
 Релизный APK должен подписываться **отдельным** ключом (не ключами других приложений); ключи и пароли не хранить в Git.
 

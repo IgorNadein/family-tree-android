@@ -1,6 +1,5 @@
 plugins {
     id 'com.android.application'
-    id 'kotlin-android-extensions'
 }
 def credentialFile = rootProject.file('credential.properties')
 def credential
@@ -27,8 +26,8 @@ android {
         applicationId = 'ru.nadein.familytree'
         minSdk = 23
         targetSdk = 37.2
-        versionCode = 1
-        versionName = '0.1.0'
+        versionCode = 2
+        versionName = '0.1.1'
         resourceConfigurations += ['ar', 'bg', 'ckb', 'cs', 'da', 'de', 'en', 'eo', 'es', 'fa', 'fr', 'hr', 'hu', 'in', 'it', 'iw', 'kn', 'lt',
                                    'mr', 'nb', 'nl', 'ota', 'pa-rPK', 'pl', 'pt', 'ru', 'sk', 'sl', 'sr', 'sv', 'ta', 'ti', 'tr', 'uk', 'vi', 'zh']
         def passkey = ''
