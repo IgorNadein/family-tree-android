@@ -75,7 +75,7 @@ jobs:
           sudo udevadm control --reload-rules
           sudo udevadm trigger --name-match=kvm
 
-      - name: Test a real tap on a family tree (Android emulator)
+      - name: Test tree navigation and parent selection (Android emulator)
         uses: ReactiveCircus/android-emulator-runner@v2
         with:
           api-level: 35
@@ -83,7 +83,7 @@ jobs:
           arch: x86_64
           profile: pixel_2
           disable-animations: true
-          script: ./gradlew :app:connectedDebugAndroidTest -Pandroid.testInstrumentationRunnerArguments.class=app.familygem.TreesActivityTouchTest --no-daemon --console=plain
+          script: ./gradlew :app:connectedDebugAndroidTest -Pandroid.testInstrumentationRunnerArguments.class=app.familygem.TreesActivityTouchTest,app.familygem.relationships.MultipleMarriagesUiTest --no-daemon --console=plain
 
       - name: Upload Android UI test results
         if: always()
