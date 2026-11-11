@@ -95,6 +95,35 @@ class TreesActivityTouchTest {
     }
 
     @Test
+    fun coldTreeIsLoadedFromJsonBeforeNavigating() {
+        Global.gc = null
+        Global.settings.openTree = 0
+        Global.settings.save()
+        Intents.init()
+        try {
+            intending(hasComponent(app.familygem.main.MainActivity::class.java.name))
+                .respondWith(Instrumentation.ActivityResult(Activity.RESULT_OK, null))
+            ActivityScenario.launch(TreesActivity::class.java).use {
+                onView(withText(title)).check(matches(isDisplayed())).perform(click())
+                // Disk I/O uses Dispatchers.IO, which Espresso does not track.
+                // Poll the observed intent on the instrumentation thread.
+                val deadline = android.os.SystemClock.uptimeMillis() + 10_000
+                while (true) {
+                    try {
+                        intended(hasComponent(app.familygem.main.MainActivity::class.java.name))
+                        break
+                    } catch (failure: AssertionError) {
+                        if (android.os.SystemClock.uptimeMillis() >= deadline) throw failure
+                        Thread.sleep(150)
+                    }
+                }
+            }
+        } finally {
+            Intents.release()
+        }
+    }
+
+    @Test
     fun tappingTreeTitleOpensTheTreeScreen() {
         Intents.init()
         try {
