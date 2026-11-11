@@ -17,6 +17,7 @@ import android.widget.SimpleAdapter
 import android.widget.TextView
 import android.widget.Toast
 import androidx.activity.enableEdgeToEdge
+import androidx.activity.viewModels
 import androidx.activity.result.ActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AlertDialog
@@ -30,6 +31,14 @@ import androidx.core.view.updatePadding
 import androidx.lifecycle.lifecycleScope
 import app.familygem.constant.Extra
 import app.familygem.constant.FileType
+import app.familygem.trees.LegacyTreeListGateway
+import app.familygem.trees.OpenTreeUseCase
+import app.familygem.trees.TreeListGateway
+import app.familygem.trees.TreeListViewModel
+import app.familygem.trees.TreeSelectionAction
+import app.familygem.trees.TreeMenuPolicy
+import app.familygem.trees.TreeMenuContext
+import app.familygem.trees.TreeMenuAction
 import app.familygem.main.MainActivity
 import app.familygem.merge.MergeActivity
 import app.familygem.share.SharingActivity
@@ -72,6 +81,9 @@ class TreesActivity : AppCompatActivity() {
     private lateinit var exporter: Exporter
     private var autoOpenedTree = false // To open automatically the tree at startup only once
     private var draggedTreeId = 0
+    private val treeListModel: TreeListViewModel by viewModels()
+    private val treeGateway: TreeListGateway = LegacyTreeListGateway()
+    private val openTreeUseCase by lazy { OpenTreeUseCase(treeGateway) }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -123,68 +135,45 @@ class TreesActivity : AppCompatActivity() {
                 if (derived) {
                     treeLayout.setBackgroundColor(ResourcesCompat.getColor(resources, R.color.accent_medium, null))
                     detailView.setTextColor(ResourcesCompat.getColor(resources, R.color.text, null))
-                    treeView.setOnClickListener {
-                        if (!TreeUtil.compareTrees(this@TreesActivity, tree, true)) {
-                            tree.grade = 10 // It is downgraded
-                            Global.settings.save()
-                            updateList()
-                            Toast.makeText(this@TreesActivity, R.string.something_wrong, Toast.LENGTH_LONG).show()
-                        }
-                    }
                 } else if (exhausted) {
                     treeLayout.setBackgroundColor(ResourcesCompat.getColor(resources, R.color.consumed, null))
                     titleView.setTextColor(ResourcesCompat.getColor(resources, R.color.gray_text, null))
-                    treeView.setOnClickListener {
-                        if (!TreeUtil.compareTrees(this@TreesActivity, tree, true)) {
-                            tree.grade = 10 // It is downgraded
-                            Global.settings.save()
-                            updateList()
-                            Toast.makeText(this@TreesActivity, R.string.something_wrong, Toast.LENGTH_LONG).show()
-                        }
-                    }
                 } else {
                     treeLayout.setBackgroundColor(ResourcesCompat.getColor(resources, R.color.back_element, null))
-                    treeView.setOnClickListener {
-                        progress.visibility = View.VISIBLE
-                        if (Global.gc != null && treeId == Global.settings.openTree) { // Tree already opened
-                            startActivity(Intent(this@TreesActivity, MainActivity::class.java))
-                        } else {
-                            lifecycleScope.launch(IO) {
-                                if (TreeUtil.openGedcom(treeId, true))
-                                    startActivity(Intent(this@TreesActivity, MainActivity::class.java))
-                                else withContext(Main) { progress.visibility = View.GONE }
-                            }
-                        }
-                    }
                 }
+                // The View owns the click. A future Compose row will call this
+                // action directly instead of forwarding synthetic View clicks.
+                treeView.setOnClickListener { onTreeRowSelected(treeId) }
                 treeLayout.visibility = if (treeId == draggedTreeId) View.INVISIBLE else View.VISIBLE
                 // Three dots button
                 treeView.findViewById<ImageButton>(R.id.tree_menu).setOnClickListener { view: View ->
                     val exists = File(filesDir, "$treeId.json").exists()
                     val popup = PopupMenu(this@TreesActivity, view)
                     val menu = popup.menu
-                    if (treeId == Global.settings.openTree && Global.shouldSave)
-                        menu.add(0, -1, 0, R.string.save)
-                    if (Global.settings.expert && derived || Global.settings.expert && exhausted)
-                        menu.add(0, 0, 0, R.string.open)
-                    if (!exhausted || Global.settings.expert)
-                        menu.add(0, 1, 0, R.string.info)
-                    if (!derived && !exhausted || Global.settings.expert)
-                        menu.add(0, 2, 0, R.string.rename)
-                    if (!exhausted)
-                        menu.add(0, 4, 0, R.string.find_errors)
-                    if (exists && !derived && !exhausted) // You cannot re-share a tree received back, even if you are an expert
-                        menu.add(0, 5, 0, R.string.share_tree)
-                    if (exists && !derived && !exhausted && Global.settings.expert && Global.settings.trees.size > 1)
-                        menu.add(0, 6, 0, R.string.merge_tree)
-                    if (exists && !derived && !exhausted && Global.settings.expert && Global.settings.trees.size > 1
-                        && tree.shares != null && tree.grade != 0 // Must be 9 or 10
-                    ) menu.add(0, 7, 0, R.string.compare) // TODO: remove menu item and compare automatically
-                    if (exists && Global.settings.expert)
-                        menu.add(0, 8, 0, R.string.make_backup)
-                    if (exists && Global.settings.expert && !exhausted)
-                        menu.add(0, 9, 0, R.string.export_gedcom)
-                    menu.add(0, 10, 0, R.string.delete)
+                    val actions = TreeMenuPolicy.available(TreeMenuContext(
+                        grade = tree.grade,
+                        expert = Global.settings.expert,
+                        treeExists = exists,
+                        otherTreesExist = Global.settings.trees.size > 1,
+                        hasShareHistory = tree.shares != null,
+                        unsavedCurrentTree = treeId == Global.settings.openTree && Global.shouldSave
+                    ))
+                    actions.forEach { action ->
+                        val label = when (action) {
+                            TreeMenuAction.SAVE -> R.string.save
+                            TreeMenuAction.OPEN_DERIVED -> R.string.open
+                            TreeMenuAction.INFO -> R.string.info
+                            TreeMenuAction.RENAME -> R.string.rename
+                            TreeMenuAction.FIND_ERRORS -> R.string.find_errors
+                            TreeMenuAction.SHARE -> R.string.share_tree
+                            TreeMenuAction.MERGE -> R.string.merge_tree
+                            TreeMenuAction.COMPARE -> R.string.compare
+                            TreeMenuAction.BACKUP -> R.string.make_backup
+                            TreeMenuAction.EXPORT_GEDCOM -> R.string.export_gedcom
+                            TreeMenuAction.DELETE -> R.string.delete
+                        }
+                        menu.add(0, action.menuId, 0, label)
+                    }
                     popup.setOnMenuItemClickListener(MenuItemClickListener(position, treeId))
                     popup.show()
                 }
@@ -556,19 +545,47 @@ class TreesActivity : AppCompatActivity() {
         })
     }
 
+    /** Present immutable snapshots; storage/Global never escape into the ViewModel. */
     fun updateList() {
+        treeListModel.present(treeGateway.snapshot())
         treeList.clear()
-        for (tree in Global.settings.trees) {
-            val item: MutableMap<String, String> = HashMap(3)
-            item["id"] = tree.id.toString()
-            item["title"] = tree.title
-            // If GEDCOM is already open, updates the data
-            if (Global.gc != null && Global.settings.openTree == tree.id)
-                TreeUtil.refreshData(Global.gc, tree)
-            item["data"] = tree.getBasicData()
-            treeList.add(item)
+        for (tree in treeListModel.trees.value) {
+            treeList.add(mapOf(
+                "id" to tree.id.toString(),
+                "title" to tree.title,
+                "data" to tree.details
+            ))
         }
         adapter.notifyDataSetChanged()
+    }
+
+    /** All UI frameworks must call this action, not an Android View's click listener. */
+    private fun onTreeRowSelected(treeId: Int) {
+        when (treeListModel.actionFor(treeId)) {
+            TreeSelectionAction.COMPARE -> {
+                val tree = Global.settings.getTree(treeId)
+                if (!TreeUtil.compareTrees(this, tree, true)) {
+                    tree.grade = 10
+                    Global.settings.save()
+                    updateList()
+                    Toast.makeText(this, R.string.something_wrong, Toast.LENGTH_LONG).show()
+                }
+            }
+            TreeSelectionAction.OPEN -> {
+                if (!treeListModel.beginOpening(treeId)) return
+                progress.visibility = View.VISIBLE
+                lifecycleScope.launch {
+                    try {
+                        val opened = withContext(IO) { openTreeUseCase.execute(treeId) }
+                        if (opened) startActivity(Intent(this@TreesActivity, MainActivity::class.java))
+                        else progress.visibility = View.GONE
+                    } finally {
+                        treeListModel.finishOpening(treeId)
+                    }
+                }
+            }
+            null -> Unit
+        }
     }
 
     /** List of error messages with occurrence count. */
