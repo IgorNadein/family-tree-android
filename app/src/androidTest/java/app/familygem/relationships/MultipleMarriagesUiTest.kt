@@ -107,18 +107,32 @@ class MultipleMarriagesUiTest {
                 scenario.onActivity { activity ->
                     NewRelativeDialog(Global.gc.getPerson("I1"), null, null, true, null)
                         .show(activity.supportFragmentManager, "parent-choice")
+                    // FragmentTransaction is async; complete it before Espresso
+                    // tries to resolve the dialog's window.
+                    activity.supportFragmentManager.executePendingTransactions()
                 }
-                onView(withId(R.id.newRelative_child)).perform(scrollTo(), click())
-                onView(withText(R.string.select_parents_for_child)).check(matches(isDisplayed()))
-                onView(withId(android.R.id.button1)).check(matches(not(isEnabled())))
+                onView(withId(R.id.newRelative_child))
+                    .inRoot(isDialog())
+                    .perform(scrollTo(), click())
+                onView(withText(R.string.select_parents_for_child))
+                    .inRoot(isDialog())
+                    .check(matches(isDisplayed()))
+                onView(withId(android.R.id.button1))
+                    .inRoot(isDialog())
+                    .check(matches(not(isEnabled())))
 
-                onView(withId(R.id.newRelative_families)).perform(click())
+                onView(withId(R.id.newRelative_families))
+                    .inRoot(isDialog())
+                    .perform(click())
                 // Spinner items live in a platform PopupWindow, not in the
                 // Activity root. Match the second husband by name.
                 onView(withText(containsString("Второй")))
                     .inRoot(isPlatformPopup())
                     .perform(click())
-                onView(withId(android.R.id.button1)).check(matches(isEnabled())).perform(click())
+                onView(withId(android.R.id.button1))
+                    .inRoot(isDialog())
+                    .check(matches(isEnabled()))
+                    .perform(click())
                 intended(allOf(
                     hasComponent(PersonEditorActivity::class.java.name),
                     hasExtra(Extra.FAMILY_ID, "F2")
