@@ -13,7 +13,7 @@
 
 ## Сборка
 
-Используется Android Gradle Plugin 9.4.0 со встроенной поддержкой Kotlin (без устаревшего `kotlin-android-extensions`). Gradle закреплён версией 9.6.0 в wrapper; для сборки требуются Java 17+ и Android SDK 37.2. На `nadein-core` применяем установленную Java 21. Путь к локально установленному Android SDK нужно указать через `ANDROID_HOME` либо `local.properties`; ни то ни другое не хранится в Git.
+Используется Android Gradle Plugin 9.3.1 и Kotlin Gradle Plugin 2.4.21 (без устаревшего `kotlin-android-extensions`). Встроенный Kotlin AGP отключён: он использовал несовместимый с библиотеками проекта компилятор 2.2.10. Gradle закреплён версией 9.6.0 в wrapper; для сборки требуются Java 17+ и Android SDK 37.2. На `nadein-core` применяем установленную Java 21. Путь к локально установленному Android SDK нужно указать через `ANDROID_HOME` либо `local.properties`; ни то ни другое не хранится в Git.
 
 Команды сборки после настройки инструментов:
 

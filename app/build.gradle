@@ -1,5 +1,6 @@
 plugins {
     id 'com.android.application'
+    id 'org.jetbrains.kotlin.android'
 }
 def credentialFile = rootProject.file('credential.properties')
 def credential
