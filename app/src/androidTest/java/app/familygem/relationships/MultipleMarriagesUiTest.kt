@@ -14,6 +14,7 @@ import androidx.test.espresso.intent.Intents.intended
 import androidx.test.espresso.intent.Intents.intending
 import androidx.test.espresso.intent.matcher.IntentMatchers.hasComponent
 import androidx.test.espresso.intent.matcher.IntentMatchers.hasExtra
+import androidx.test.espresso.matcher.RootMatchers.isPlatformPopup
 import androidx.test.espresso.matcher.ViewMatchers.isDisplayed
 import androidx.test.espresso.matcher.ViewMatchers.isEnabled
 import androidx.test.espresso.matcher.ViewMatchers.withId
@@ -39,6 +40,7 @@ import org.folg.gedcom.model.Person
 import org.folg.gedcom.model.SpouseFamilyRef
 import org.folg.gedcom.model.SpouseRef
 import org.folg.gedcom.parser.JsonParser
+import org.hamcrest.Matchers.containsString
 import org.hamcrest.Matchers.allOf
 import org.hamcrest.Matchers.anything
 import org.hamcrest.Matchers.not
@@ -110,8 +112,11 @@ class MultipleMarriagesUiTest {
                 onView(withId(android.R.id.button1)).check(matches(not(isEnabled())))
 
                 onView(withId(R.id.newRelative_families)).perform(click())
-                // 0 = prompt, 1 = first marriage, 2 = second marriage.
-                onData(anything()).atPosition(2).perform(click())
+                // Spinner items live in a platform PopupWindow, not in the
+                // Activity root. Match the second husband by name.
+                onView(withText(containsString("Второй")))
+                    .inRoot(isPlatformPopup())
+                    .perform(click())
                 onView(withId(android.R.id.button1)).check(matches(isEnabled())).perform(click())
                 intended(allOf(
                     hasComponent(PersonEditorActivity::class.java.name),
