@@ -20,6 +20,7 @@ import app.familygem.Settings
 import app.familygem.Settings.Tree
 import app.familygem.U
 import app.familygem.constant.Extra
+import app.familygem.data.FileTreeRepository
 import app.familygem.share.CompareActivity
 import app.familygem.util.Util.caseString
 import app.familygem.util.Util.string
@@ -28,7 +29,7 @@ import com.google.gson.Gson
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers.IO
 import kotlinx.coroutines.Dispatchers.Main
-import kotlinx.coroutines.GlobalScope
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -44,9 +45,7 @@ import org.folg.gedcom.model.Person
 import org.folg.gedcom.parser.JsonParser
 import org.folg.gedcom.parser.ModelParser
 import org.json.JSONObject
-import java.io.BufferedReader
 import java.io.File
-import java.io.FileReader
 import java.io.InputStream
 import java.io.PrintWriter
 import java.util.ArrayDeque
@@ -70,6 +69,10 @@ class PartialSuccessException(message: String?) : Exception(message)
 
 /** Functions about the general tree shared across many classes. */
 object TreeUtil {
+
+    // Application-owned jobs survive screen changes without using GlobalScope.
+    private val appScope = AppCoroutineScope.scope
+    private val treeRepository by lazy { FileTreeRepository(Global.context.filesDir) }
 
     /** Standard opening of a stored GEDCOM to edit it. */
     suspend fun openGedcom(treeId: Int, saveSettings: Boolean): Boolean {
@@ -99,48 +102,27 @@ object TreeUtil {
         return gedcom
     }
 
-    /** Reads the tree JSON and returns a GEDCOM or null. */
+    /** Reads a tree through the storage boundary, preserving existing error handling. */
     suspend fun readJson(treeId: Int): Gedcom? {
-        val gedcom: Gedcom?
-        val file = File(Global.context.filesDir, "$treeId.json")
-        val text = StringBuilder()
         try {
-            val reader = BufferedReader(FileReader(file))
-            var line: String?
-            while (reader.readLine().also { line = it } != null) {
-                text.append(line).append('\n')
-            }
-            reader.close()
-            var json: String = text.toString()
-            json = updateTreeLanguage(json)
-            gedcom = JsonParser().fromJson(json)
-            if (gedcom == null) throw Exception(string(R.string.no_useful_data))
-            // This Notifier was introduced in version 0.9.1
-            // TODO: Can be removed from here in the future because tree.birthdays will never more be null
+            val gedcom = treeRepository.read(treeId)
+                ?: throw Exception(string(R.string.no_useful_data))
+            // Kept here because notification scheduling is an Android concern.
             if (Global.settings.getTree(treeId).birthdays == null) {
                 Notifier(Global.context, gedcom, treeId, Notifier.What.CREATE)
             }
+            return gedcom
+        } catch (cancelled: CancellationException) {
+            throw cancelled
         } catch (exception: Exception) {
             Util.toast(exception.localizedMessage)
             return null
         } catch (error: Error) {
-            val message = if (error is OutOfMemoryError) string(R.string.not_memory_tree) else error.localizedMessage
+            val message = if (error is OutOfMemoryError) string(R.string.not_memory_tree)
+            else error.localizedMessage
             Util.toast(message)
             return null
         }
-        return gedcom
-    }
-
-    /**
-     * Replaces Italian with English in JSON tree data.
-     * Introduced in Family Gem 0.8
-     */
-    private fun updateTreeLanguage(json: String): String {
-        var engJson = json
-        engJson = engJson.replace("\"zona\":", "\"zone\":")
-        engJson = engJson.replace("\"famili\":", "\"kin\":")
-        engJson = engJson.replace("\"passato\":", "\"passed\":")
-        return engJson
     }
 
     /**
@@ -150,7 +132,7 @@ object TreeUtil {
     fun isGlobalGedcomOk(refresh: Runnable?): Boolean {
         return if (Global.gc != null) true
         else {
-            GlobalScope.launch(IO) {
+            appScope.launch(IO) {
                 Global.gc = readJson(Global.settings.openTree)
                 withContext(Main) { refresh?.run() }
             }
@@ -166,7 +148,7 @@ object TreeUtil {
      * @param refresh Will refresh also other activities
      * @param objects Record(s) to which update the change date
      */
-    fun save(refresh: Boolean, vararg objects: Any?) = GlobalScope.launch {
+    fun save(refresh: Boolean, vararg objects: Any?) = appScope.launch {
         if (refresh) Global.edited = true
         ChangeUtil.updateChangeDate(*objects)
         // Avoids multiple concurrent saving
@@ -190,30 +172,35 @@ object TreeUtil {
         onlyOnce = true
     }
 
-    /** Saves the GEDCOM tree as JSON. */
+    /** Saves the GEDCOM tree through the repository; backup follows only a successful write. */
     suspend fun saveJson(gedcom: Gedcom, treeId: Int, makeBackup: Boolean = Global.settings.backup) {
         gedcom.header?.apply {
-            if (generator?.value == "FAMILY_GEM") { // Only if header is by Family Gem
+            if (generator?.value == "FAMILY_GEM") {
                 dateTime = ChangeUtil.actualDateTime()
-                // If necessary updates the version of Family Gem
-                if (generator.version != BuildConfig.VERSION_NAME) generator.version = BuildConfig.VERSION_NAME
+                if (generator.version != BuildConfig.VERSION_NAME) {
+                    generator.version = BuildConfig.VERSION_NAME
+                }
             }
         }
         try {
-            FileUtils.writeStringToFile(File(Global.context.filesDir, "$treeId.json"), JsonParser().toJson(gedcom), "UTF-8")
+            treeRepository.write(treeId, gedcom)
+        } catch (cancelled: CancellationException) {
+            throw cancelled
         } catch (exception: Exception) {
             Util.toast(exception.localizedMessage)
+            return
         } catch (error: Error) {
             val message = if (error is OutOfMemoryError) string(R.string.not_memory_tree)
             else error.localizedMessage ?: string(R.string.something_wrong)
             Util.toast(message)
+            return
         }
         Notifier(Global.context, gedcom, treeId, Notifier.What.DEFAULT)
         if (makeBackup) Global.backupViewModel.backupDelayed(treeId)
     }
 
-    // Temporary hack to call a suspend function from Java
-    fun saveJsonAsync(gedcom: Gedcom, treeId: Int) = GlobalScope.launch(IO) { saveJson(gedcom, treeId) }
+    /** Java compatibility until the remaining Java screens are migrated. */
+    fun saveJsonAsync(gedcom: Gedcom, treeId: Int) = appScope.launch(IO) { saveJson(gedcom, treeId) }
 
     /** Refreshes the data displayed below the tree title in TreesActivity list. */
     fun refreshData(gedcom: Gedcom, tree: Tree) {

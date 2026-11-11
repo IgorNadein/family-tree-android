@@ -46,7 +46,6 @@ import com.android.installreferrer.api.InstallReferrerStateListener
 import kotlinx.coroutines.Dispatchers.Default
 import kotlinx.coroutines.Dispatchers.IO
 import kotlinx.coroutines.Dispatchers.Main
-import kotlinx.coroutines.GlobalScope
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.folg.gedcom.model.ChildRef
@@ -390,7 +389,7 @@ class TreesActivity : AppCompatActivity() {
         override fun onMenuItemClick(item: MenuItem): Boolean {
             val id = item.itemId
             if (id == -1) { // Save
-                GlobalScope.launch(IO) { TreeUtil.saveJson(Global.gc, treeId) }
+                TreeUtil.saveJsonAsync(Global.gc, treeId)
                 Global.shouldSave = false
             } else if (id == 0) { // Open a derived tree
                 progress.visibility = View.VISIBLE

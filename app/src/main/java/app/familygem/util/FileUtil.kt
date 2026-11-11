@@ -52,7 +52,6 @@ import com.bumptech.glide.request.target.Target
 import com.bumptech.glide.signature.ObjectKey
 import jp.wasabeef.glide.transformations.BlurTransformation
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.GlobalScope
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.folg.gedcom.model.Gedcom
@@ -306,7 +305,7 @@ object FileUtil {
                 }
 
                 override fun onLoadFailed(e: GlideException?, model: Any?, target: Target<Drawable>, isFirstResource: Boolean): Boolean {
-                    val coroutineScope = imageView.findViewTreeLifecycleOwner()?.lifecycleScope ?: GlobalScope
+                    val coroutineScope = imageView.findViewTreeLifecycleOwner()?.lifecycleScope ?: AppCoroutineScope.scope
                     val job = if (model is String) { // A generic file on the web
                         coroutineScope.launch(Dispatchers.IO) {
                             try {

@@ -32,7 +32,6 @@ import app.familygem.util.TreeUtil.createHeader
 import app.familygem.util.Util
 import kotlinx.coroutines.Dispatchers.IO
 import kotlinx.coroutines.Dispatchers.Main
-import kotlinx.coroutines.GlobalScope
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.launch
@@ -150,9 +149,8 @@ class SharingActivity : BaseActivity(R.string.share_tree) {
                     updateChangeDate(submitter)
                 }
                 submitterId = submitter!!.id
-                GlobalScope.launch(IO) {
-                    TreeUtil.saveJson(gedcom!!, tree.id) // Possibly bypassing the preference not to save automatically
-                }
+                // Persist even if the share screen closes before the write completes.
+                TreeUtil.saveJsonAsync(gedcom!!, tree.id)
 
                 // Tree accessibility for app developer
                 val accessibleTree = findViewById<CheckBox>(R.id.share_allow)

@@ -20,7 +20,6 @@ import app.familygem.util.TreeUtil
 import app.familygem.util.writeName
 import kotlinx.coroutines.Dispatchers.IO
 import kotlinx.coroutines.Dispatchers.Main
-import kotlinx.coroutines.GlobalScope
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.folg.gedcom.model.CharacterSet
@@ -124,9 +123,10 @@ class InfoActivity : BaseActivity(R.string.info) {
             headerButton.setText(R.string.create_header)
             headerButton.setOnClickListener {
                 gedcom!!.header = TreeUtil.createHeader(file.name)
-                GlobalScope.launch(IO) {
-                    TreeUtil.saveJson(gedcom!!, treeId)
-                    withContext(Main) { recreate() }
+                val saving = TreeUtil.saveJsonAsync(gedcom!!, treeId)
+                lifecycleScope.launch {
+                    saving.join()
+                    recreate()
                 }
             }
         } else {
@@ -211,9 +211,10 @@ class InfoActivity : BaseActivity(R.string.info) {
                 gedcomVersion.version = "5.5.1"
                 gedcomVersion.form = "LINEAGE-LINKED"
                 h.destination = null
-                GlobalScope.launch(IO) {
-                    TreeUtil.saveJson(gedcom!!, treeId)
-                    withContext(Main) { recreate() }
+                val saving = TreeUtil.saveJsonAsync(gedcom!!, treeId)
+                lifecycleScope.launch {
+                    saving.join()
+                    recreate()
                 }
             }
             NoteUtil.placeNotes(layout, h, Level.MEDIUM, gedcom!!) // TODO: improve note managing: level = HIGH etc.

@@ -43,7 +43,6 @@ import app.familygem.visitor.NoteList
 import app.familygem.visitor.NoteSourcesList
 import com.google.android.material.navigation.NavigationView
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.GlobalScope
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
@@ -269,13 +268,13 @@ class MainActivity : AppCompatActivity(), NavigationView.OnNavigationItemSelecte
         saveButton.setOnClickListener { button ->
             button.isEnabled = false
             binding.mainLayout.closeDrawer(GravityCompat.START)
-            GlobalScope.launch(Dispatchers.IO) {
-                TreeUtil.saveJson(Global.gc, Global.settings.openTree)
+            // Keep the write alive across rotation or leaving the screen.
+            val saving = TreeUtil.saveJsonAsync(Global.gc, Global.settings.openTree)
+            lifecycleScope.launch {
+                saving.join()
                 Global.shouldSave = false
-                withContext(Dispatchers.Main) {
-                    button.visibility = View.GONE
-                    Toast.makeText(this@MainActivity, R.string.saved, Toast.LENGTH_SHORT).show()
-                }
+                button.visibility = View.GONE
+                Toast.makeText(this@MainActivity, R.string.saved, Toast.LENGTH_SHORT).show()
             }
         }
         saveButton.setOnLongClickListener { button ->
