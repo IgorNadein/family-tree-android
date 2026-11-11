@@ -1,5 +1,6 @@
 package app.familygem.data
 
+import app.familygem.history.VersionedTreeStore
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -27,6 +28,7 @@ interface TreeRepository {
  */
 class FileTreeRepository(private val filesDir: File) : TreeRepository {
     private val writeMutex = Mutex()
+    private val history = VersionedTreeStore(filesDir)
 
     override suspend fun read(treeId: Int): Gedcom? = withContext(Dispatchers.IO) {
         val json = treeFile(treeId).readText(Charsets.UTF_8)
@@ -38,12 +40,23 @@ class FileTreeRepository(private val filesDir: File) : TreeRepository {
             val destination = treeFile(treeId)
             val temporary = File.createTempFile("tree-" + treeId + "-", ".tmp", filesDir)
             try {
+                val json = JsonParser().toJson(gedcom)
                 FileOutputStream(temporary).use { stream ->
-                    stream.write(JsonParser().toJson(gedcom).toByteArray(Charsets.UTF_8))
+                    stream.write(json.toByteArray(Charsets.UTF_8))
                     stream.fd.sync()
                 }
                 if (!temporary.renameTo(destination)) {
                     throw IOException("Unable to replace tree file: " + destination.name)
+                }
+                // Old JSON remains 100% compatible; the revision journal lives
+                // separately and is reconstructed if a save was interrupted.
+                try {
+                    history.record(treeId, json)
+                } catch (journalError: Exception) {
+                    // The GEDCOM file was saved successfully. Do not break
+                    // legacy saves if the optional history journal is corrupt
+                    // or this old tree contains inconsistent references.
+                    android.util.Log.w("FamilyTreeHistory", "Cannot append optional revision", journalError)
                 }
             } finally {
                 temporary.delete()

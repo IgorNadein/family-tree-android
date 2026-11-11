@@ -12,7 +12,10 @@ enum class TreeMenuAction(val menuId: Int) {
     COMPARE(7),
     BACKUP(8),
     EXPORT_GEDCOM(9),
-    DELETE(10)
+    DELETE(10),
+    EXPORT_FTREE(11),
+    IMPORT_FTREE(12),
+    HISTORY(13)
 }
 
 data class TreeMenuContext(
@@ -44,6 +47,11 @@ object TreeMenuPolicy {
                     add(TreeMenuAction.COMPARE)
                 }
             }
+        }
+        if (context.treeExists && ordinary) {
+            add(TreeMenuAction.EXPORT_FTREE)
+            add(TreeMenuAction.IMPORT_FTREE)
+            add(TreeMenuAction.HISTORY)
         }
         if (context.treeExists && context.expert) {
             add(TreeMenuAction.BACKUP)

@@ -215,6 +215,9 @@ object TreeUtil {
     fun deleteTree(treeId: Int) {
         val treeFile = File(Global.context.filesDir, "$treeId.json")
         treeFile.delete()
+        // Delete synchronously to avoid racing with a newly-created tree
+        // that may reuse the same numeric ID.
+        File(Global.context.filesDir, ".ftree-history/$treeId").deleteRecursively()
         val mediaDir = Global.context.getExternalFilesDir(treeId.toString())
         if (mediaDir != null) FileUtil.deleteFilesAndDirs(mediaDir)
         if (Global.settings.openTree == treeId) Global.gc = null

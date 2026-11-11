@@ -5,6 +5,7 @@ import android.app.Instrumentation
 import androidx.test.core.app.ActivityScenario
 import androidx.test.espresso.Espresso.onView
 import androidx.test.espresso.action.ViewActions.click
+import androidx.test.espresso.action.ViewActions.scrollTo
 import androidx.test.espresso.action.ViewActions.replaceText
 import androidx.test.espresso.assertion.ViewAssertions.matches
 import androidx.test.espresso.intent.Intents
@@ -120,6 +121,24 @@ class TreesActivityTouchTest {
             }
         } finally {
             Intents.release()
+        }
+    }
+
+    @Test
+    fun versionedArchiveImportIsReachableFromCreateTreeScreen() {
+        ActivityScenario.launch(NewTreeActivity::class.java).use {
+            onView(withId(R.id.new_import_ftree)).perform(scrollTo())
+                .check(matches(isDisplayed()))
+        }
+    }
+
+    @Test
+    fun versionedArchiveMenuIsVisibleForAnOrdinaryTree() {
+        ActivityScenario.launch(TreesActivity::class.java).use {
+            onView(withId(R.id.tree_menu)).perform(click())
+            onView(withText(R.string.ftree_export)).check(matches(isDisplayed()))
+            onView(withText(R.string.ftree_import_merge)).check(matches(isDisplayed()))
+            onView(withText(R.string.ftree_history_title)).check(matches(isDisplayed()))
         }
     }
 

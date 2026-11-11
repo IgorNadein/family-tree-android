@@ -30,6 +30,8 @@ import androidx.core.view.updateLayoutParams
 import androidx.core.view.updatePadding
 import androidx.lifecycle.lifecycleScope
 import app.familygem.constant.Extra
+import app.familygem.history.VersionedTreeStore
+import app.familygem.history.VersionedTreeUi
 import app.familygem.constant.FileType
 import app.familygem.trees.LegacyTreeListGateway
 import app.familygem.trees.OpenTreeUseCase
@@ -70,6 +72,7 @@ import org.folg.gedcom.model.SpouseFamilyRef
 import org.folg.gedcom.model.SpouseRef
 import org.folg.gedcom.model.Submitter
 import java.io.File
+import android.net.Uri
 
 /** Second activity visible in the app, listing all available trees. */
 class TreesActivity : AppCompatActivity() {
@@ -81,6 +84,7 @@ class TreesActivity : AppCompatActivity() {
     private lateinit var exporter: Exporter
     private var autoOpenedTree = false // To open automatically the tree at startup only once
     private var draggedTreeId = 0
+    private var archiveTreeId = 0
     private val treeListModel: TreeListViewModel by viewModels()
     private val treeGateway: TreeListGateway = LegacyTreeListGateway()
     private val openTreeUseCase by lazy { OpenTreeUseCase(treeGateway) }
@@ -106,6 +110,7 @@ class TreesActivity : AppCompatActivity() {
 
         if (savedInstanceState != null) {
             autoOpenedTree = savedInstanceState.getBoolean("autoOpenedTree")
+            archiveTreeId = savedInstanceState.getInt("archiveTreeId")
         }
 
         InsetsUtil(listView.rootView) {
@@ -171,6 +176,9 @@ class TreesActivity : AppCompatActivity() {
                             TreeMenuAction.BACKUP -> R.string.make_backup
                             TreeMenuAction.EXPORT_GEDCOM -> R.string.export_gedcom
                             TreeMenuAction.DELETE -> R.string.delete
+                            TreeMenuAction.EXPORT_FTREE -> R.string.ftree_export
+                            TreeMenuAction.IMPORT_FTREE -> R.string.ftree_import_merge
+                            TreeMenuAction.HISTORY -> R.string.ftree_history_title
                         }
                         menu.add(0, action.menuId, 0, label)
                     }
@@ -343,6 +351,52 @@ class TreesActivity : AppCompatActivity() {
         }
     }
 
+    private val ftreeExportLauncher = registerForActivityResult(
+        ActivityResultContracts.CreateDocument("application/octet-stream")
+    ) { uri: Uri? ->
+        if (uri != null && archiveTreeId > 0) {
+            val treeId = archiveTreeId
+            progress.visibility = View.VISIBLE
+            lifecycleScope.launch {
+                val result = runCatching {
+                    withContext(IO) {
+                        val file = File(filesDir, "$treeId.json")
+                        val title = Global.settings.getTree(treeId).title
+                        val stream = contentResolver.openOutputStream(uri)
+                            ?: error("Cannot create .ftree file")
+                        stream.use {
+                            VersionedTreeStore(filesDir).export(treeId, title, file.readText(Charsets.UTF_8), it)
+                        }
+                    }
+                }
+                progress.visibility = View.GONE
+                result.onSuccess {
+                    Toast.makeText(this@TreesActivity, R.string.ftree_export_completed, Toast.LENGTH_LONG).show()
+                }.onFailure { VersionedTreeUi.showError(this@TreesActivity, it) }
+            }
+        }
+    }
+
+    private val ftreeMergeLauncher = registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri: Uri? ->
+        if (uri != null && archiveTreeId > 0) {
+            val treeId = archiveTreeId
+            progress.visibility = View.VISIBLE
+            lifecycleScope.launch {
+                val result = runCatching {
+                    withContext(IO) {
+                        val stream = contentResolver.openInputStream(uri)
+                            ?: error("Cannot read .ftree archive")
+                        stream.use { VersionedTreeStore(filesDir).inspect(it) }
+                    }
+                }
+                progress.visibility = View.GONE
+                result.onSuccess { archive ->
+                    VersionedTreeUi.reviewMerge(this@TreesActivity, treeId, archive) { updateList() }
+                }.onFailure { VersionedTreeUi.showError(this@TreesActivity, it) }
+            }
+        }
+    }
+
     val zipBackupLauncher = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) {
         finalizeExport(it, FileType.ZIP_BACKUP)
     }
@@ -442,6 +496,32 @@ class TreesActivity : AppCompatActivity() {
                         withContext(Main) { progress.visibility = View.GONE }
                     }
                 }
+            } else if (id == TreeMenuAction.EXPORT_FTREE.menuId) {
+                if (Global.settings.openTree == treeId && Global.shouldSave)
+                    Toast.makeText(this@TreesActivity, R.string.ftree_save_first, Toast.LENGTH_LONG).show()
+                else {
+                    archiveTreeId = treeId
+                    AlertDialog.Builder(this@TreesActivity)
+                        .setTitle(R.string.ftree_export)
+                        .setMessage(R.string.ftree_share_warning)
+                        .setPositiveButton(android.R.string.ok) { _, _ ->
+                            val filename = Global.settings.getTree(treeId).title
+                                .replace(Regex("[^\\p{L}\\p{N}._ -]"), "_")
+                                .take(80).ifBlank { "family-tree" } + ".ftree"
+                            ftreeExportLauncher.launch(filename)
+                        }
+                        .setNegativeButton(R.string.cancel, null)
+                        .show()
+                }
+            } else if (id == TreeMenuAction.IMPORT_FTREE.menuId) {
+                if (Global.settings.openTree == treeId && Global.shouldSave)
+                    Toast.makeText(this@TreesActivity, R.string.ftree_save_first, Toast.LENGTH_LONG).show()
+                else {
+                    archiveTreeId = treeId
+                    ftreeMergeLauncher.launch(arrayOf("*/*"))
+                }
+            } else if (id == TreeMenuAction.HISTORY.menuId) {
+                VersionedTreeUi.showHistory(this@TreesActivity, treeId)
             } else if (id == 10) { // Delete tree
                 Util.confirmDelete(this@TreesActivity) {
                     TreeUtil.deleteTree(treeId)
@@ -469,6 +549,7 @@ class TreesActivity : AppCompatActivity() {
 
     override fun onSaveInstanceState(outState: Bundle) {
         outState.putBoolean("autoOpenedTree", autoOpenedTree)
+        outState.putInt("archiveTreeId", archiveTreeId)
         super.onSaveInstanceState(outState)
     }
 

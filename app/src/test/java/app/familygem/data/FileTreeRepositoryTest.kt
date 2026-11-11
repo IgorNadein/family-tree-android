@@ -1,5 +1,6 @@
 package app.familygem.data
 
+import app.familygem.history.VersionedTreeStore
 import kotlinx.coroutines.runBlocking
 import org.folg.gedcom.model.Gedcom
 import org.folg.gedcom.model.Name
@@ -31,6 +32,19 @@ class FileTreeRepositoryTest {
         assertEquals("I1", reopened.people.first().id)
         assertEquals("Иван /Иванов/", reopened.people.first().names.first().value)
         assertTrue(File(folder.root, "1.json").exists())
+    }
+
+    @Test
+    fun savingNormalGedcomCreatesVersionHistoryWithoutChangingItsJson() = runBlocking {
+        val repository = FileTreeRepository(folder.root)
+        val first = treeWithPerson("I1", "Мария /Иванова/")
+        val edited = treeWithPerson("I1", "Мария /Петрова/")
+        repository.write(3, first)
+        repository.write(3, edited)
+        val history = VersionedTreeStore(folder.root).history(3)
+        assertEquals(2, history.size)
+        assertEquals(JsonParser().toJson(edited), File(folder.root, "3.json").readText())
+        assertEquals(JsonParser().toJson(edited), history.first().snapshotJson)
     }
 
     @Test

@@ -26,6 +26,9 @@ class TreeMenuPolicyTest {
                 TreeMenuAction.RENAME,
                 TreeMenuAction.FIND_ERRORS,
                 TreeMenuAction.SHARE,
+                TreeMenuAction.EXPORT_FTREE,
+                TreeMenuAction.IMPORT_FTREE,
+                TreeMenuAction.HISTORY,
                 TreeMenuAction.DELETE
             ),
             menu()
@@ -77,5 +80,8 @@ class TreeMenuPolicyTest {
         assertFalse(actions.contains(TreeMenuAction.EXPORT_GEDCOM))
         assertFalse(actions.contains(TreeMenuAction.MERGE))
         assertFalse(actions.contains(TreeMenuAction.SHARE))
+        assertFalse(actions.contains(TreeMenuAction.EXPORT_FTREE))
+        assertFalse(actions.contains(TreeMenuAction.IMPORT_FTREE))
+        assertFalse(actions.contains(TreeMenuAction.HISTORY))
     }
 }

@@ -21,6 +21,9 @@ import androidx.core.content.ContextCompat
 import androidx.core.net.toUri
 import androidx.lifecycle.lifecycleScope
 import app.familygem.databinding.NewTreeActivityBinding
+import app.familygem.history.VersionedTreeStore
+import app.familygem.history.VersionedTreeUi
+import app.familygem.history.VersionedTreeArchive
 import app.familygem.util.FileUtil
 import app.familygem.util.TreeUtil
 import kotlinx.coroutines.Dispatchers.IO
@@ -139,6 +142,68 @@ class NewTreeActivity : BaseActivity(R.string.new_tree) {
                 .setType(mimeTypes[0])
                 .putExtra(Intent.EXTRA_MIME_TYPES, mimeTypes)
             gedcomResultLauncher.launch(intent)
+        }
+
+        // A history archive preserves a tree's UUID so further changes can
+        // be exchanged without a server and merged by a common ancestor.
+        val ftreeLauncher = registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+            if (uri != null) {
+                progressView.visibility = View.VISIBLE
+                lifecycleScope.launch {
+                    val result = runCatching {
+                        withContext(IO) {
+                            contentResolver.openInputStream(uri)?.use {
+                                VersionedTreeStore(filesDir).inspect(it)
+                            } ?: error("Unable to read .ftree archive")
+                        }
+                    }
+                    progressView.visibility = View.GONE
+                    result.onSuccess { archive -> confirmImportArchive(archive) }
+                        .onFailure { VersionedTreeUi.showError(this@NewTreeActivity, it) }
+                }
+            }
+        }
+        findViewById<Button>(R.id.new_import_ftree).setOnClickListener {
+            ftreeLauncher.launch(arrayOf("*/*"))
+        }
+    }
+
+    private fun confirmImportArchive(archive: VersionedTreeArchive) {
+        lifecycleScope.launch {
+            val store = VersionedTreeStore(filesDir)
+            val matchingTreeIds = withContext(IO) {
+                Global.settings.trees.filter { tree ->
+                    store.localIdentity(tree.id) == archive.manifest.treeUuid
+                }.map { it.id }
+            }
+            // A merge target must be unambiguous. If several clones exist,
+            // users can select the intended one in its own three-dot menu.
+            val existingId = matchingTreeIds.singleOrNull()
+            val builder = AlertDialog.Builder(this@NewTreeActivity)
+                .setTitle(R.string.ftree_import_button)
+                .setMessage(getString(R.string.ftree_import_question, archive.title, archive.commits.size) +
+                    "\n\n" + getString(R.string.ftree_share_warning))
+                .setNegativeButton(R.string.cancel, null)
+            if (existingId != null) {
+                builder.setPositiveButton(R.string.ftree_merge_existing) { _, _ ->
+                    VersionedTreeUi.reviewMerge(this@NewTreeActivity, existingId, archive) {
+                        startActivity(Intent(this@NewTreeActivity, TreesActivity::class.java))
+                        finish()
+                    }
+                }
+                builder.setNeutralButton(R.string.ftree_import_as_new) { _, _ ->
+                    VersionedTreeUi.importAsNew(this@NewTreeActivity, archive) {
+                        onBackPressedDispatcher.onBackPressed()
+                    }
+                }
+            } else {
+                builder.setPositiveButton(R.string.ftree_import_as_new) { _, _ ->
+                    VersionedTreeUi.importAsNew(this@NewTreeActivity, archive) {
+                        onBackPressedDispatcher.onBackPressed()
+                    }
+                }
+            }
+            builder.show()
         }
     }
 
