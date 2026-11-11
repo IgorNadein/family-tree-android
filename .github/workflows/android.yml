@@ -24,11 +24,11 @@ jobs:
           distribution: temurin
           java-version: '21'
 
-      - name: Setup Android SDK
-        uses: android-actions/setup-android@v3
-
       - name: Install Android SDK 37.2
-        run: sdkmanager "platforms;android-37.2" "build-tools;36.0.0" "platform-tools"
+        run: |
+          echo "SDK path: $ANDROID_HOME"
+          sdkmanager --version
+          sdkmanager "platforms;android-37.2" "build-tools;36.0.0" "platform-tools"
 
       - name: Setup Gradle caching
         uses: gradle/actions/setup-gradle@v4
