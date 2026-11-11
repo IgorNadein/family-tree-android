@@ -27,8 +27,10 @@ jobs:
       - name: Install Android SDK 37.2
         run: |
           echo "SDK path: $ANDROID_HOME"
-          sdkmanager --version
-          sdkmanager "platforms;android-37.2" "build-tools;36.0.0" "platform-tools"
+          SDKMANAGER="$(find "$ANDROID_HOME/cmdline-tools" -type f -name sdkmanager | sort -V | tail -1)"
+          test -n "$SDKMANAGER"
+          "$SDKMANAGER" --version
+          "$SDKMANAGER" --sdk_root="$ANDROID_HOME" --install "platforms;android-37.2" "build-tools;36.0.0" "platform-tools"
 
       - name: Setup Gradle caching
         uses: gradle/actions/setup-gradle@v4
