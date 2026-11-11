@@ -142,9 +142,11 @@ class MultipleMarriagesUiTest {
                         .putExtra(Extra.RELATION, Relation.CHILD)
                     assertTrue(U.checkMultiMarriages(intent, activity, null))
                 }
-                onView(withText(R.string.which_family_add_child)).check(matches(isDisplayed()))
+                onView(withText(R.string.which_family_add_child))
+                    .inRoot(isDialog())
+                    .check(matches(isDisplayed()))
                 // Existing families appear in GEDCOM order. Second = new husband.
-                onData(anything()).atPosition(1).perform(click())
+                onData(anything()).inRoot(isDialog()).atPosition(1).perform(click())
                 intended(allOf(
                     hasComponent(PersonEditorActivity::class.java.name),
                     hasExtra(Extra.FAMILY_ID, "F2")
