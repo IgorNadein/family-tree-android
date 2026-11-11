@@ -21,6 +21,7 @@ import app.familygem.Settings.Tree
 import app.familygem.U
 import app.familygem.constant.Extra
 import app.familygem.data.FileTreeRepository
+import app.familygem.history.AndroidTreeMediaAccess
 import app.familygem.share.CompareActivity
 import app.familygem.util.Util.caseString
 import app.familygem.util.Util.string
@@ -72,7 +73,7 @@ object TreeUtil {
 
     // Application-owned jobs survive screen changes without using GlobalScope.
     private val appScope = AppCoroutineScope.scope
-    private val treeRepository by lazy { FileTreeRepository(Global.context.filesDir) }
+    private val treeRepository by lazy { FileTreeRepository(Global.context.filesDir, AndroidTreeMediaAccess(Global.context)) }
 
     /** Standard opening of a stored GEDCOM to edit it. */
     suspend fun openGedcom(treeId: Int, saveSettings: Boolean): Boolean {

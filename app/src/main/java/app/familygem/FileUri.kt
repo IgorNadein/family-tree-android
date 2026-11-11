@@ -6,6 +6,7 @@ import android.os.ParcelFileDescriptor
 import android.provider.DocumentsContract
 import androidx.documentfile.provider.DocumentFile
 import app.familygem.util.FileUtil
+import app.familygem.history.VersionedMediaFiles
 import org.folg.gedcom.model.Media
 import java.io.File
 
@@ -43,6 +44,10 @@ class FileUri(val context: Context, val media: Media, val treeId: Int = Global.s
 
     /** Looks for the file on the device with different path combinations. */
     private fun getFileFromMedia(): File? {
+        // Imported versioned checkouts preserve GEDCOM references, even for colliding filenames.
+        VersionedMediaFiles.mappedFile(context.filesDir,
+            context.getExternalFilesDir(treeId.toString()) ?: context.filesDir,
+            treeId, mediaPath!!)?.let { return it }
         // Original file path
         var test = File(mediaPath!!)
         if (test.isFile && test.canRead()) return test

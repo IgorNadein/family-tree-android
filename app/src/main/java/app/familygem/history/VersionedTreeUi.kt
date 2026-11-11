@@ -25,9 +25,10 @@ object VersionedTreeUi {
     fun reviewMerge(activity: AppCompatActivity, treeId: Int, archive: VersionedTreeArchive, onComplete: () -> Unit) {
         if (Global.settings.openTree == treeId && Global.shouldSave) {
             Toast.makeText(activity, R.string.ftree_save_first, Toast.LENGTH_LONG).show()
+            archive.release()
             return
         }
-        val store = VersionedTreeStore(activity.filesDir)
+        val store = VersionedTreeStore(activity.filesDir, AndroidTreeMediaAccess(activity))
         activity.lifecycleScope.launch {
             val result = runCatching {
                 withContext(Dispatchers.IO) {
@@ -43,9 +44,13 @@ object VersionedTreeUi {
                     .setPositiveButton(R.string.ftree_review_merge) { _, _ ->
                         resolveNext(activity, store, plan, mutableMapOf(), 0, onComplete)
                     }
-                    .setNegativeButton(R.string.cancel, null)
+                    .setNegativeButton(R.string.cancel) { _, _ -> archive.release() }
+                    .setOnCancelListener { archive.release() }
                     .show()
-            }.onFailure { showError(activity, it) }
+            }.onFailure {
+                archive.release()
+                showError(activity, it)
+            }
         }
     }
 
@@ -59,15 +64,26 @@ object VersionedTreeUi {
                     withContext(Dispatchers.IO) { store.applyMerge(plan, decisions) }
                 }
                 result.onSuccess { merged ->
-                    if (merged && Global.settings.openTree == plan.treeId) {
-                        // Other screens may retain the previously opened GEDCOM.
-                        withContext(Dispatchers.IO) { TreeUtil.openGedcom(plan.treeId, false) }
+                    if (merged) {
+                        val updatedTree = withContext(Dispatchers.IO) {
+                            val data = File(activity.filesDir, plan.treeId.toString() + ".json").readText()
+                            org.folg.gedcom.parser.JsonParser().fromJson(data).apply { createIndexes() }
+                        }
+                        TreeUtil.refreshData(updatedTree, Global.settings.getTree(plan.treeId))
+                        if (Global.settings.openTree == plan.treeId) {
+                            // Other screens may retain the previously opened GEDCOM.
+                            withContext(Dispatchers.IO) { TreeUtil.openGedcom(plan.treeId, false) }
+                        }
                     }
                     Toast.makeText(activity,
                         if (merged) R.string.ftree_merge_completed else R.string.ftree_no_changes,
                         Toast.LENGTH_LONG).show()
+                    plan.incoming.release()
                     onComplete()
-                }.onFailure { showError(activity, it) }
+                }.onFailure {
+                    plan.incoming.release()
+                    showError(activity, it)
+                }
             }
             return
         }
@@ -90,7 +106,8 @@ object VersionedTreeUi {
                 decisions[conflict.key] = MergeChoice.LOCAL
                 resolveNext(activity, store, plan, decisions, index + 1, onComplete)
             }
-            .setNeutralButton(R.string.cancel, null)
+            .setNeutralButton(R.string.cancel) { _, _ -> plan.incoming.release() }
+            .setOnCancelListener { plan.incoming.release() }
             .show()
     }
 
@@ -98,7 +115,7 @@ object VersionedTreeUi {
         activity.lifecycleScope.launch {
             val result = runCatching {
                 withContext(Dispatchers.IO) {
-                    VersionedTreeStore(activity.filesDir).history(treeId)
+                    VersionedTreeStore(activity.filesDir, AndroidTreeMediaAccess(activity)).history(treeId)
                 }
             }
             result.onSuccess { commits ->
@@ -121,7 +138,7 @@ object VersionedTreeUi {
             val result = runCatching {
                 withContext(Dispatchers.IO) {
                     val id = Global.settings.max() + 1
-                    val store = VersionedTreeStore(activity.filesDir)
+                    val store = VersionedTreeStore(activity.filesDir, AndroidTreeMediaAccess(activity))
                     store.importNew(id, archive)
                     id
                 }
@@ -131,14 +148,20 @@ object VersionedTreeUi {
                 val gedcom = org.folg.gedcom.parser.JsonParser().fromJson(json)
                 gedcom.createIndexes()
                 val title = archive.title.ifBlank { activity.getString(R.string.app_name) }
-                Global.settings.addTree(Settings.Tree(id, title, gedcom.people.size, 0, null, null, null, 0))
+                val tree = Settings.Tree(id, title, gedcom.people.size, 0, null, null, null, 0)
+                Global.settings.addTree(tree)
+                TreeUtil.refreshData(gedcom, tree)
                 Global.settings.openTree = id
                 Global.settings.save()
                 Global.gc = gedcom
                 Global.shouldSave = false
                 Toast.makeText(activity, R.string.ftree_import_completed, Toast.LENGTH_LONG).show()
+                archive.release()
                 onComplete()
-            }.onFailure { showError(activity, it) }
+            }.onFailure {
+                archive.release()
+                showError(activity, it)
+            }
         }
     }
 

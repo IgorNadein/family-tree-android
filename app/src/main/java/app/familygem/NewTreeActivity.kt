@@ -183,7 +183,8 @@ class NewTreeActivity : BaseActivity(R.string.new_tree) {
                 .setTitle(R.string.ftree_import_button)
                 .setMessage(getString(R.string.ftree_import_question, archive.title, archive.commits.size) +
                     "\n\n" + getString(R.string.ftree_share_warning))
-                .setNegativeButton(R.string.cancel, null)
+                .setNegativeButton(R.string.cancel) { _, _ -> archive.release() }
+                .setOnCancelListener { archive.release() }
             if (existingId != null) {
                 builder.setPositiveButton(R.string.ftree_merge_existing) { _, _ ->
                     VersionedTreeUi.reviewMerge(this@NewTreeActivity, existingId, archive) {

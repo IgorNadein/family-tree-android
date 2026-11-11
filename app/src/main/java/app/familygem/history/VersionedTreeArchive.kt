@@ -1,12 +1,14 @@
 package app.familygem.history
 
 import com.google.gson.Gson
+import com.google.gson.reflect.TypeToken
 import com.google.gson.JsonArray
 import com.google.gson.JsonElement
 import com.google.gson.JsonNull
 import com.google.gson.JsonObject
 import com.google.gson.JsonParser
 import com.google.gson.JsonPrimitive
+import app.familygem.visitor.MediaList
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -43,15 +45,20 @@ data class SnapshotCommit(
     val createdAtMillis: Long,
     val author: String,
     val snapshotJson: String,
-    val id: String
+    val id: String,
+    /** null means a legacy v1 commit whose hash did not cover attachments. */
+    val media: Map<String, String>? = null
 )
 
 data class VersionedTreeArchive(
     val manifest: HistoryManifest,
     val title: String,
-    val commits: List<SnapshotCommit>
+    val commits: List<SnapshotCommit>,
+    /** Staged, verified blob files. Never keep binary contents in memory. */
+    val blobFolder: File? = null
 ) {
     fun headCommit(): SnapshotCommit = commits.first { it.id == manifest.head }
+    fun release() { blobFolder?.deleteRecursively() }
 }
 
 enum class MergeChoice { LOCAL, INCOMING }
@@ -188,15 +195,19 @@ object GedcomThreeWayMerge {
     }
 }
 
-class VersionedTreeStore(private val filesDir: File) {
+/**
+ * Content-addressed repository. JSON snapshots remain GEDCOM-compatible;
+ * v2 commits additionally hash a map of media references to immutable blobs.
+ */
+class VersionedTreeStore(private val filesDir: File, private val mediaAccess: TreeMediaAccess? = null) {
     companion object {
         // Independent repository instances share this lock inside one process.
         private val lock = Mutex()
         private val gson = Gson()
         private val hashPattern = Regex("[0-9a-f]{64}")
-        private const val MAX_ENTRY_BYTES = 16L * 1024 * 1024
-        private const val MAX_TOTAL_BYTES = 64L * 1024 * 1024
-        private const val MAX_COMMITS = 1024
+        private const val LEGACY_MAX_ENTRY_BYTES = 16L * 1024 * 1024
+        private const val LEGACY_MAX_TOTAL_BYTES = 64L * 1024 * 1024
+        private const val LEGACY_MAX_COMMITS = 1024
     }
 
     private fun directory(treeId: Int): File = File(filesDir, ".ftree-history/$treeId")
@@ -207,32 +218,145 @@ class VersionedTreeStore(private val filesDir: File) {
         return File(commitsFolder(treeId), "$id.json")
     }
     private fun treeFile(treeId: Int): File = File(filesDir, "$treeId.json")
+    private fun blobsFolder(treeId: Int): File = File(directory(treeId), "blobs")
+    private fun sourceCacheFile(treeId: Int) = File(directory(treeId), "source-cache.json")
+    private data class SourceCacheEntry(val fingerprint: MediaFingerprint, val hash: String)
+    private val sourceCacheType = object : TypeToken<Map<String, SourceCacheEntry>>() {}.type
+    private fun blobFile(treeId: Int, hash: String): File {
+        require(hashPattern.matches(hash))
+        return File(blobsFolder(treeId), hash)
+    }
+
+    private fun referencedFiles(json: String): Set<String> {
+        val gedcom = GedcomJsonParser().fromJson(json)
+        val visitor = MediaList(gedcom)
+        gedcom.accept(visitor)
+        return visitor.list.mapNotNull { it.file?.replace('\\', '/')?.trim() }
+            .filter { it.isNotEmpty() && !it.startsWith("https://") && !it.startsWith("http://") }
+            .toSet()
+    }
+
+    private fun captureMedia(treeId: Int, snapshotJson: String, strict: Boolean): Map<String, String> {
+        if (mediaAccess == null) return emptyMap()
+        val previous = sourceCacheFile(treeId).takeIf { it.isFile }?.let {
+            gson.fromJson<Map<String, SourceCacheEntry>>(it.readText(), sourceCacheType)
+        }.orEmpty()
+        val updated = linkedMapOf<String, SourceCacheEntry>()
+        val result = linkedMapOf<String, String>()
+        for (reference in referencedFiles(snapshotJson)) {
+            val fingerprint = mediaAccess.fingerprint(treeId, reference)
+            val cached = previous[reference]
+            // As with Git's index, avoid re-reading multi-gigabyte files on every text edit.
+            // Always rehash during explicit export, and avoid caching files just modified.
+            val stable = fingerprint != null && fingerprint.modified < System.currentTimeMillis() - 2000L
+            val hash = if (!strict && stable && cached?.fingerprint == fingerprint &&
+                blobFile(treeId, cached.hash).isFile) cached.hash
+            else {
+                val input = mediaAccess.open(treeId, reference)
+                if (input == null) {
+                    if (strict) throw IOException("Referenced attachment cannot be read: $reference")
+                    continue
+                }
+                input.use { storeBlob(blobsFolder(treeId), it) }
+            }
+            result[reference] = hash
+            if (fingerprint != null) updated[reference] = SourceCacheEntry(fingerprint, hash)
+        }
+        writeAtomic(sourceCacheFile(treeId), gson.toJson(updated))
+        return result
+    }
+
+    private fun storeBlob(folder: File, input: InputStream): String {
+        folder.mkdirs()
+        val temp = File.createTempFile("blob-", ".tmp", folder)
+        try {
+            val digest = MessageDigest.getInstance("SHA-256")
+            FileOutputStream(temp).use { output ->
+                val buffer = ByteArray(64 * 1024)
+                while (true) {
+                    val read = input.read(buffer)
+                    if (read < 0) break
+                    if (read == 0) continue
+                    digest.update(buffer, 0, read)
+                    output.write(buffer, 0, read)
+                }
+                output.fd.sync()
+            }
+            val hash = digest.digest().joinToString("") { "%02x".format(it) }
+            val destination = File(folder, hash)
+            if (!destination.isFile && !temp.renameTo(destination)) {
+                throw IOException("Cannot install attachment blob $hash")
+            }
+            return hash
+        } finally {
+            temp.delete()
+        }
+    }
+
+    private fun installBlobs(treeId: Int, archive: VersionedTreeArchive) {
+        val allHashes = archive.commits.flatMap { it.media.orEmpty().values }.toSet()
+        if (allHashes.isEmpty()) return
+        val sourceFolder = archive.blobFolder ?: throw IOException("Archive has no staged attachments")
+        for (hash in allHashes) {
+            val existing = blobFile(treeId, hash)
+            if (existing.isFile) continue
+            val source = File(sourceFolder, hash)
+            require(source.isFile) { "Missing attachment $hash" }
+            source.inputStream().use { input ->
+                require(storeBlob(blobsFolder(treeId), input) == hash) { "Invalid attachment hash $hash" }
+            }
+        }
+    }
+
+    private fun checkout(
+        treeId: Int, media: Map<String, String>,
+        previousHeadMedia: Map<String, String> = emptyMap()
+    ) {
+        if (media.isNotEmpty()) requireNotNull(mediaAccess) { "Attachment storage is unavailable" }
+        val previousCheckout = VersionedMediaFiles.current(filesDir, treeId)
+        var changed = false
+        for ((ref, hash) in media) {
+            val blob = blobFile(treeId, hash)
+            require(blob.isFile) { "Missing attachment $hash" }
+            if (previousCheckout[ref] == hash && previousHeadMedia[ref] == hash &&
+                mediaAccess!!.hasCheckout(treeId, ref)) continue
+            mediaAccess!!.checkout(treeId, ref, blob)
+            changed = true
+        }
+        writeAtomic(VersionedMediaFiles.index(filesDir, treeId), gson.toJson(media))
+        VersionedMediaFiles.invalidate(filesDir, treeId)
+        if (changed) sourceCacheFile(treeId).delete()
+    }
 
     /** Called after ordinary repository saves. A no-op if the snapshot is unchanged. */
     suspend fun record(treeId: Int, snapshotJson: String): HistoryManifest = withContext(Dispatchers.IO) {
         lock.withLock { recordLocked(treeId, snapshotJson) }
     }
 
-    private fun recordLocked(treeId: Int, snapshotJson: String): HistoryManifest {
+    private fun recordLocked(treeId: Int, snapshotJson: String, strictMedia: Boolean = false): HistoryManifest {
         validateGedcom(snapshotJson)
         val oldManifest = readManifest(treeId)
         val oldHead = oldManifest?.let { readCommit(treeId, it.head) }
-        if (oldManifest != null && oldHead?.snapshotJson == snapshotJson) return oldManifest
+        val media = captureMedia(treeId, snapshotJson, strictMedia)
+        if (oldHead?.snapshotJson == snapshotJson && oldHead.media == media &&
+            oldManifest.formatVersion == 2) return oldManifest
         val commit = commit(
             parents = if (oldHead == null) emptyList() else listOf(oldHead.id),
-            snapshot = snapshotJson
+            snapshot = snapshotJson,
+            media = media
         )
         writeCommit(treeId, commit)
-        val manifest = HistoryManifest(treeUuid = oldManifest?.treeUuid ?: UUID.randomUUID().toString(), head = commit.id)
+        val manifest = HistoryManifest(formatVersion = 2,
+            treeUuid = oldManifest?.treeUuid ?: UUID.randomUUID().toString(), head = commit.id)
         writeAtomic(manifestFile(treeId), gson.toJson(manifest))
         return manifest
     }
 
     suspend fun export(treeId: Int, title: String, snapshotJson: String, stream: OutputStream) = withContext(Dispatchers.IO) {
         lock.withLock {
-            val manifest = recordLocked(treeId, snapshotJson)
+            val manifest = recordLocked(treeId, snapshotJson, strictMedia = true)
             val commits = collectReachable(treeId, manifest.head).values.toList()
-            writeArchive(VersionedTreeArchive(manifest, title, commits), stream)
+            writeArchive(treeId, VersionedTreeArchive(manifest, title, commits), stream)
         }
     }
 
@@ -250,7 +374,9 @@ class VersionedTreeStore(private val filesDir: File) {
             validateArchive(archive)
             // Never overwrite an existing tree, even if something goes wrong.
             try {
+                installBlobs(treeId, archive)
                 installCommits(treeId, archive.commits)
+                checkout(treeId, archive.headCommit().media.orEmpty())
                 writeAtomic(treeFile(treeId), archive.headCommit().snapshotJson)
                 writeAtomic(manifestFile(treeId), gson.toJson(archive.manifest))
             } catch (e: Exception) {
@@ -277,14 +403,48 @@ class VersionedTreeStore(private val filesDir: File) {
                     .minWithOrNull(compareBy<String> { mineAncestors.getValue(it) + theirsAncestors.getValue(it) }
                         .thenBy { mineAncestors.getValue(it) })
                     ?: throw IllegalArgumentException("No common history; cannot merge unrelated revisions")
-                val result = GedcomThreeWayMerge.merge(
-                    known.getValue(common).snapshotJson,
-                    known.getValue(local.head).snapshotJson,
-                    known.getValue(incoming.manifest.head).snapshotJson
-                )
-                MergePreview(treeId, local.head, incoming, common, result.changes, result.conflicts)
+                val base = known.getValue(common)
+                val ours = known.getValue(local.head)
+                val theirs = known.getValue(incoming.manifest.head)
+                val result = GedcomThreeWayMerge.merge(base.snapshotJson, ours.snapshotJson, theirs.snapshotJson)
+                val files = mergeMedia(base.media.orEmpty(), ours.media.orEmpty(), theirs.media.orEmpty())
+                MergePreview(treeId, local.head, incoming, common,
+                    result.changes + files.changes, result.conflicts + files.conflicts)
             }
         }
+
+    private data class MediaMergeResult(
+        val values: Map<String, String>,
+        val conflicts: List<MergeConflict>,
+        val changes: Int
+    )
+
+    private fun mergeMedia(
+        base: Map<String, String>, local: Map<String, String>, incoming: Map<String, String>,
+        choices: Map<String, MergeChoice> = emptyMap()
+    ): MediaMergeResult {
+        val merged = linkedMapOf<String, String>()
+        val conflicts = mutableListOf<MergeConflict>()
+        var changes = 0
+        for (ref in (base.keys + local.keys + incoming.keys).toSet()) {
+            val b = base[ref]
+            val l = local[ref]
+            val r = incoming[ref]
+            val chosen = when {
+                r == b || r == l -> l
+                l == b -> r
+                else -> {
+                    val conflict = MergeConflict("attachments", ref,
+                        b?.let(::JsonPrimitive), l?.let(::JsonPrimitive), r?.let(::JsonPrimitive))
+                    conflicts += conflict
+                    if (choices[conflict.key] == MergeChoice.INCOMING) r else l
+                }
+            }
+            if (chosen != null) merged[ref] = chosen
+            if (chosen != l) changes++
+        }
+        return MediaMergeResult(merged, conflicts, changes)
+    }
 
     /** Applies only a reviewed preview; refuses if local history has moved. */
     suspend fun applyMerge(preview: MergePreview, choices: Map<String, MergeChoice>): Boolean =
@@ -307,18 +467,30 @@ class VersionedTreeStore(private val filesDir: File) {
                     all.getValue(preview.incoming.manifest.head).snapshotJson,
                     choices
                 )
-                require(result.conflicts.all { choices.containsKey(it.key) }) { "All merge conflicts must be resolved" }
+                val mediaResult = mergeMedia(
+                    all.getValue(preview.commonAncestorId).media.orEmpty(),
+                    all.getValue(manifest.head).media.orEmpty(),
+                    all.getValue(preview.incoming.manifest.head).media.orEmpty(), choices)
+                require((result.conflicts + mediaResult.conflicts).all { choices.containsKey(it.key) }) {
+                    "All merge conflicts must be resolved"
+                }
                 val mergedJson = gson.toJson(result.merged)
                 validateGedcom(mergedJson)
+                val refs = referencedFiles(mergedJson)
+                val mergedMedia = mediaResult.values.filterKeys { it in refs }
                 if (mergedJson == all.getValue(manifest.head).snapshotJson &&
+                    mergedMedia == all.getValue(manifest.head).media.orEmpty() &&
                     preview.incoming.manifest.head == manifest.head) return@withLock false
 
-                // New snapshot + a two-parent commit preserve both lines of history.
-                val mergeCommit = commit(listOf(manifest.head, preview.incoming.manifest.head).distinct(), mergedJson)
+                // Capture both lines of history and all blobs before publishing the merge.
+                val mergeCommit = commit(listOf(manifest.head, preview.incoming.manifest.head).distinct(),
+                    mergedJson, mergedMedia)
+                installBlobs(treeId, preview.incoming)
                 installCommits(treeId, preview.incoming.commits)
                 writeCommit(treeId, mergeCommit)
+                checkout(treeId, mergedMedia, all.getValue(manifest.head).media.orEmpty())
                 writeAtomic(treeFile(treeId), mergedJson)
-                writeAtomic(manifestFile(treeId), gson.toJson(manifest.copy(head = mergeCommit.id)))
+                writeAtomic(manifestFile(treeId), gson.toJson(manifest.copy(formatVersion = 2, head = mergeCommit.id)))
                 true
             }
         }
@@ -334,18 +506,26 @@ class VersionedTreeStore(private val filesDir: File) {
         lock.withLock { directory(treeId).deleteRecursively() }
     }
 
-    private fun commit(parents: List<String>, snapshot: String): SnapshotCommit {
+    private fun commit(parents: List<String>, snapshot: String, media: Map<String, String>): SnapshotCommit {
         val timestamp = System.currentTimeMillis()
-        val content = CommitBody(parents, timestamp, "Local device", snapshot)
-        return SnapshotCommit(parents, timestamp, "Local device", snapshot, sha256(gson.toJson(content)))
+        val draft = SnapshotCommit(parents, timestamp, "Local device", snapshot, "", media)
+        return draft.copy(id = expectedId(draft))
     }
 
     private data class CommitBody(
         val parents: List<String>, val createdAtMillis: Long,
         val author: String, val snapshotJson: String
     )
-    private fun expectedId(commit: SnapshotCommit) =
-        sha256(gson.toJson(CommitBody(commit.parents, commit.createdAtMillis, commit.author, commit.snapshotJson)))
+    private data class CommitBodyV2(
+        val parents: List<String>, val createdAtMillis: Long,
+        val author: String, val snapshotJson: String, val media: Map<String, String>
+    )
+    private fun expectedId(commit: SnapshotCommit) = sha256(gson.toJson(
+        if (commit.media == null) CommitBody(commit.parents, commit.createdAtMillis,
+            commit.author, commit.snapshotJson)
+        else CommitBodyV2(commit.parents, commit.createdAtMillis,
+            commit.author, commit.snapshotJson, commit.media)
+    ))
 
     private fun readManifest(treeId: Int): HistoryManifest? {
         val file = manifestFile(treeId)
@@ -368,14 +548,15 @@ class VersionedTreeStore(private val filesDir: File) {
 
     private fun collectReachable(treeId: Int, head: String): LinkedHashMap<String, SnapshotCommit> {
         val result = linkedMapOf<String, SnapshotCommit>()
-        fun visit(id: String) {
-            if (result.containsKey(id)) return
-            require(result.size < MAX_COMMITS) { "Too many history revisions" }
+        val stack = ArrayDeque<String>()
+        stack.addLast(head)
+        while (stack.isNotEmpty()) {
+            val id = stack.removeLast()
+            if (id in result) continue
             val revision = readCommit(treeId, id)
             result[id] = revision
-            revision.parents.forEach(::visit)
+            revision.parents.asReversed().forEach(stack::addLast)
         }
-        visit(head)
         return result
     }
 
@@ -392,12 +573,12 @@ class VersionedTreeStore(private val filesDir: File) {
         return distances
     }
 
-    private fun writeArchive(archive: VersionedTreeArchive, stream: OutputStream) {
+    /**
+     * ZIP64-compatible streaming: only JSON metadata is resident in memory.
+     * Binary blobs are copied in fixed-size chunks and addressed by SHA-256.
+     */
+    private fun writeArchive(treeId: Int, archive: VersionedTreeArchive, stream: OutputStream) {
         validateArchive(archive)
-        val payloadBytes = archive.commits.sumOf { gson.toJson(it).toByteArray(Charsets.UTF_8).size.toLong() } +
-            gson.toJson(archive.manifest).toByteArray(Charsets.UTF_8).size +
-            gson.toJson(archive.title).toByteArray(Charsets.UTF_8).size
-        require(payloadBytes <= MAX_TOTAL_BYTES) { "History is too large for .ftree v1 export" }
         ZipOutputStream(stream).use { out ->
             fun entry(name: String, content: String) {
                 out.putNextEntry(ZipEntry(name))
@@ -406,7 +587,28 @@ class VersionedTreeStore(private val filesDir: File) {
             }
             entry("manifest.json", gson.toJson(archive.manifest))
             entry("title.json", gson.toJson(archive.title))
-            archive.commits.forEach { entry("commits/${it.id}.json", gson.toJson(it)) }
+            archive.commits.forEach { entry("commits/" + it.id + ".json", gson.toJson(it)) }
+            val hashes = archive.commits.flatMap { it.media.orEmpty().values }.toSet().sorted()
+            for (hash in hashes) {
+                val blob = blobFile(treeId, hash)
+                require(blob.isFile) { "Attachment lost from local history: " + hash }
+                out.putNextEntry(ZipEntry("blobs/" + hash))
+                val digest = MessageDigest.getInstance("SHA-256")
+                blob.inputStream().use { input ->
+                    val buffer = ByteArray(64 * 1024)
+                    while (true) {
+                        val count = input.read(buffer)
+                        if (count < 0) break
+                        if (count == 0) continue
+                        digest.update(buffer, 0, count)
+                        out.write(buffer, 0, count)
+                    }
+                }
+                require(digest.digest().joinToString("") { "%02x".format(it) } == hash) {
+                    "Local attachment corrupted: " + hash
+                }
+                out.closeEntry()
+            }
         }
     }
 
@@ -415,73 +617,104 @@ class VersionedTreeStore(private val filesDir: File) {
         var title: String? = null
         val revisions = mutableListOf<SnapshotCommit>()
         val names = hashSetOf<String>()
-        var total = 0L
-        ZipInputStream(input).use { zip ->
-            while (true) {
-                val entry = zip.nextEntry ?: break
-                require(!entry.isDirectory && names.add(entry.name)) { "Duplicate or invalid archive entry" }
-                val permitted = entry.name == "manifest.json" || entry.name == "title.json" ||
-                    Regex("commits/[0-9a-f]{64}\\.json").matches(entry.name)
-                require(permitted) { "Unsupported archive entry: ${entry.name}" }
-                require(names.size <= MAX_COMMITS + 2) { "Too many archive entries" }
-                val output = ByteArrayOutputStream()
-                val buffer = ByteArray(8192)
-                var entrySize = 0L
+        val stage = File(filesDir, ".ftree-incoming/" + UUID.randomUUID().toString())
+        var metadataBytes = 0L
+        var largestMetadata = 0L
+        try {
+            ZipInputStream(input).use { zip ->
                 while (true) {
-                    val n = zip.read(buffer)
-                    if (n < 0) break
-                    entrySize += n
-                    total += n
-                    require(entrySize <= MAX_ENTRY_BYTES && total <= MAX_TOTAL_BYTES) { "Archive is too large" }
-                    output.write(buffer, 0, n)
-                }
-                val json = output.toString("UTF-8")
-                when (entry.name) {
-                    "manifest.json" -> manifest = gson.fromJson(json, HistoryManifest::class.java)
-                    "title.json" -> title = gson.fromJson(json, String::class.java)
-                    else -> {
-                        val revision = gson.fromJson(json, SnapshotCommit::class.java)
-                        require(entry.name == "commits/${revision.id}.json") { "Commit filename mismatch" }
-                        revisions += revision
+                    val entry = zip.nextEntry ?: break
+                    require(!entry.isDirectory && names.add(entry.name)) { "Duplicate or invalid archive entry" }
+                    val isBlob = Regex("blobs/[0-9a-f]{64}").matches(entry.name)
+                    val permitted = entry.name == "manifest.json" || entry.name == "title.json" ||
+                        Regex("commits/[0-9a-f]{64}\\.json").matches(entry.name) || isBlob
+                    require(permitted) { "Unsupported archive entry: " + entry.name }
+                    if (isBlob) {
+                        val hash = entry.name.removePrefix("blobs/")
+                        val actual = storeBlob(stage, zip)
+                        require(hash == actual) { "Corrupt attachment: " + hash }
+                    } else {
+                        val output = ByteArrayOutputStream()
+                        val buffer = ByteArray(64 * 1024)
+                        var count = 0L
+                        while (true) {
+                            val n = zip.read(buffer)
+                            if (n < 0) break
+                            if (n == 0) continue
+                            count += n
+                            output.write(buffer, 0, n)
+                        }
+                        metadataBytes += count
+                        largestMetadata = maxOf(largestMetadata, count)
+                        val json = output.toString("UTF-8")
+                        when (entry.name) {
+                            "manifest.json" -> manifest = gson.fromJson(json, HistoryManifest::class.java)
+                            "title.json" -> title = gson.fromJson(json, String::class.java)
+                            else -> {
+                                val revision = gson.fromJson(json, SnapshotCommit::class.java)
+                                require(entry.name == "commits/" + revision.id + ".json") { "Commit filename mismatch" }
+                                revisions += revision
+                            }
+                        }
                     }
+                    zip.closeEntry()
                 }
-                zip.closeEntry()
             }
+            val archive = VersionedTreeArchive(
+                manifest ?: throw IllegalArgumentException("Missing .ftree manifest"),
+                title ?: throw IllegalArgumentException("Missing .ftree title"),
+                revisions,
+                if (stage.isDirectory) stage else null
+            )
+            validateArchive(archive)
+            if (archive.manifest.formatVersion == 1) {
+                require(!stage.isDirectory) { "v1 archive cannot contain attachments" }
+                require(revisions.size <= LEGACY_MAX_COMMITS &&
+                    metadataBytes <= LEGACY_MAX_TOTAL_BYTES &&
+                    largestMetadata <= LEGACY_MAX_ENTRY_BYTES) { "Legacy archive too large" }
+            } else {
+                val expected = revisions.flatMap { it.media.orEmpty().values }.toSet()
+                val actual = stage.listFiles()?.map { it.name }?.toSet().orEmpty()
+                require(actual == expected) { "Missing or unreferenced archive attachments" }
+            }
+            return archive
+        } catch (e: Exception) {
+            stage.deleteRecursively()
+            throw e
         }
-        val archive = VersionedTreeArchive(
-            manifest ?: throw IllegalArgumentException("Missing .ftree manifest"),
-            title ?: throw IllegalArgumentException("Missing .ftree title"),
-            revisions
-        )
-        validateArchive(archive)
-        return archive
     }
 
     private fun validateArchive(archive: VersionedTreeArchive) {
         validateManifest(archive.manifest)
         require(archive.title.length <= 512) { "Tree title is too long" }
-        require(archive.commits.size in 1..MAX_COMMITS) { "Invalid revision count" }
+        require(archive.commits.isNotEmpty()) { "Invalid revision count" }
         val commits = archive.commits.associateBy { it.id }
         require(commits.size == archive.commits.size && commits.containsKey(archive.manifest.head)) { "Broken history head" }
         archive.commits.forEach { revision ->
             validateCommit(revision)
             require(revision.parents.all(commits::containsKey)) { "Missing history parent" }
         }
-        // Reject cycles, unreachable bogus commits and malformed revisions.
+        // Iterative DFS handles long commit chains without a call-stack limit.
         val state = mutableMapOf<String, Int>()
-        fun visit(id: String) {
+        val stack = ArrayDeque<Pair<String, Boolean>>()
+        stack.addLast(archive.manifest.head to false)
+        while (stack.isNotEmpty()) {
+            val (id, finished) = stack.removeLast()
+            if (finished) {
+                state[id] = 2
+                continue
+            }
             require(state[id] != 1) { "Cyclic history" }
-            if (state[id] == 2) return
+            if (state[id] == 2) continue
             state[id] = 1
-            commits.getValue(id).parents.forEach(::visit)
-            state[id] = 2
+            stack.addLast(id to true)
+            commits.getValue(id).parents.asReversed().forEach { stack.addLast(it to false) }
         }
-        visit(archive.manifest.head)
         require(state.size == commits.size) { "History includes unreachable revisions" }
     }
 
     private fun validateManifest(manifest: HistoryManifest) {
-        require(manifest.format == "family-tree-history" && manifest.formatVersion == 1) { "Unsupported .ftree format" }
+        require(manifest.format == "family-tree-history" && manifest.formatVersion in 1..2) { "Unsupported .ftree format" }
         require(UUID.fromString(manifest.treeUuid).toString() == manifest.treeUuid) { "Invalid tree UUID" }
         require(hashPattern.matches(manifest.head)) { "Invalid history head" }
     }
@@ -490,7 +723,13 @@ class VersionedTreeStore(private val filesDir: File) {
         require(hashPattern.matches(commit.id) && expectedId(commit) == commit.id) { "Corrupt .ftree history hash" }
         require(commit.parents.size <= 2 && commit.parents.distinct().size == commit.parents.size &&
                 commit.parents.all(hashPattern::matches)) { "Invalid history parents" }
-        require(commit.author.length <= 256 && commit.snapshotJson.length <= MAX_ENTRY_BYTES) { "History commit too large" }
+        require(commit.author.length <= 256) { "History author too long" }
+        commit.media?.forEach { (ref, hash) ->
+            require(ref.isNotBlank() && ref.length <= 8192 && !ref.any(Char::isISOControl) &&
+                !ref.startsWith("https://") && !ref.startsWith("http://") && hashPattern.matches(hash)) {
+                "Invalid attachment mapping"
+            }
+        }
         validateGedcom(commit.snapshotJson)
     }
 

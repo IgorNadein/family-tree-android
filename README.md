@@ -8,7 +8,7 @@
 - Основная машина: `nadein-core`
 - Каталог: `~/Dev/family-tree-android`
 - Android applicationId: `ru.nadein.familytree`
-- Версия форка: `0.2.3`; ветка разработки: `master`
+- Версия форка: `0.2.4`; ветка разработки: `master`
 
 Ветка исходного проекта сохраняется отдельно как `upstream`, чтобы можно было переносить полезные исправления.
 
@@ -29,4 +29,4 @@
 
 Сценарии нескольких браков и выбора родителей ребёнка: [docs/RELATIONSHIPS.md](docs/RELATIONSHIPS.md).
 
-Формат обмена с историей и ограничениями первой версии: [docs/VERSIONED_ARCHIVES.md](docs/VERSIONED_ARCHIVES.md).
+Формат обмена с историей, вложениями и совместимостью v1: [docs/VERSIONED_ARCHIVES.md](docs/VERSIONED_ARCHIVES.md).

@@ -451,5 +451,5 @@
     <string name="ftree_import_as_new">Import as new tree</string>
     <string name="ftree_merge_existing">Merge into existing</string>
     <string name="ftree_error">Family tree history: %1$s</string>
-    <string name="ftree_share_warning">This file contains private family information. Version 1 is not encrypted and does not include photos. Share only with people you trust.</string>
+    <string name="ftree_share_warning">This file contains private family information. The file is not encrypted. It includes photos and other attachments along with their history. Share only with people you trust.</string>
 </resources>

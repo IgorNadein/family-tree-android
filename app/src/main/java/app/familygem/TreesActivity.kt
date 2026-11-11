@@ -31,6 +31,7 @@ import androidx.core.view.updatePadding
 import androidx.lifecycle.lifecycleScope
 import app.familygem.constant.Extra
 import app.familygem.history.VersionedTreeStore
+import app.familygem.history.AndroidTreeMediaAccess
 import app.familygem.history.VersionedTreeUi
 import app.familygem.constant.FileType
 import app.familygem.trees.LegacyTreeListGateway
@@ -365,7 +366,7 @@ class TreesActivity : AppCompatActivity() {
                         val stream = contentResolver.openOutputStream(uri)
                             ?: error("Cannot create .ftree file")
                         stream.use {
-                            VersionedTreeStore(filesDir).export(treeId, title, file.readText(Charsets.UTF_8), it)
+                            VersionedTreeStore(filesDir, AndroidTreeMediaAccess(this@TreesActivity)).export(treeId, title, file.readText(Charsets.UTF_8), it)
                         }
                     }
                 }

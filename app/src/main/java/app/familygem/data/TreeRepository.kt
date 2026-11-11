@@ -1,6 +1,7 @@
 package app.familygem.data
 
 import app.familygem.history.VersionedTreeStore
+import app.familygem.history.TreeMediaAccess
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -26,9 +27,9 @@ interface TreeRepository {
  * A temporary file in the same directory is renamed into place only after a
  * complete successful write, so a failed save does not truncate the last tree.
  */
-class FileTreeRepository(private val filesDir: File) : TreeRepository {
+class FileTreeRepository(private val filesDir: File, mediaAccess: TreeMediaAccess? = null) : TreeRepository {
     private val writeMutex = Mutex()
-    private val history = VersionedTreeStore(filesDir)
+    private val history = VersionedTreeStore(filesDir, mediaAccess)
 
     override suspend fun read(treeId: Int): Gedcom? = withContext(Dispatchers.IO) {
         val json = treeFile(treeId).readText(Charsets.UTF_8)
