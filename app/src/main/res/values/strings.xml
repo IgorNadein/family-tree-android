@@ -425,4 +425,5 @@
     <string name="update_playstore">Please update Play Store app.</string>
     <string name="year">Year</string>
     <string name="next">Next</string>
+    <string name="tree_actions_description">Family tree actions</string>
 </resources>

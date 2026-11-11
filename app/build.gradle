@@ -1,6 +1,7 @@
 plugins {
     id 'com.android.application'
     id 'org.jetbrains.kotlin.android'
+    id 'org.jetbrains.kotlin.plugin.compose'
 }
 def credentialFile = rootProject.file('credential.properties')
 def credential
@@ -27,8 +28,8 @@ android {
         applicationId = 'ru.nadein.familytree'
         minSdk = 23
         targetSdk = 37.2
-        versionCode = 3
-        versionName = '0.2.0'
+        versionCode = 4
+        versionName = '0.3.0'
         resourceConfigurations += ['ar', 'bg', 'ckb', 'cs', 'da', 'de', 'en', 'eo', 'es', 'fa', 'fr', 'hr', 'hu', 'in', 'it', 'iw', 'kn', 'lt',
                                    'mr', 'nb', 'nl', 'ota', 'pa-rPK', 'pl', 'pt', 'ru', 'sk', 'sl', 'sr', 'sv', 'ta', 'ti', 'tr', 'uk', 'vi', 'zh']
         def passkey = ''
@@ -56,11 +57,12 @@ android {
         buildConfig = true
         viewBinding = true
         dataBinding = true
+        compose = true
     }
     compileOptions {
         coreLibraryDesugaringEnabled = true
-        sourceCompatibility JavaVersion.VERSION_1_8
-        targetCompatibility JavaVersion.VERSION_1_8
+        sourceCompatibility JavaVersion.VERSION_11
+        targetCompatibility JavaVersion.VERSION_11
     }
     dependenciesInfo {
         includeInApk = false
@@ -68,11 +70,17 @@ android {
 }
 kotlin {
     compilerOptions {
-        jvmTarget = org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_1_8
+        jvmTarget = org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_11
     }
 }
 
 dependencies {
+    implementation platform('androidx.compose:compose-bom:2026.09.00')
+    implementation 'androidx.compose.ui:ui'
+    implementation 'androidx.compose.foundation:foundation'
+    implementation 'androidx.compose.material3:material3'
+    implementation 'androidx.compose.ui:ui-tooling-preview'
+    debugImplementation 'androidx.compose.ui:ui-tooling'
     // Otherwise Glide 5.0.4+ throws NoClassDefFoundError on API <= 23
     coreLibraryDesugaring 'com.android.tools:desugar_jdk_libs:2.1.5'
     // commons-io versions >= 2.9.0 throws NoClassDefFoundError on API <= 25

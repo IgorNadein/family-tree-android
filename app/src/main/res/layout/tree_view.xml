@@ -1,17 +1,26 @@
 <?xml version="1.0" encoding="utf-8"?>
 <FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
     android:layout_width="match_parent"
-    android:layout_height="wrap_content">
+    android:layout_height="wrap_content"
+    android:clipChildren="false"
+    android:clipToPadding="false">
 
     <RelativeLayout
         android:id="@+id/tree_layout"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:background="?android:attr/selectableItemBackground"
-        android:paddingStart="16dp">
+        android:clipChildren="false"
+        android:clipToPadding="false">
+
+        <androidx.compose.ui.platform.ComposeView
+            android:id="@+id/tree_card_compose"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content" />
 
         <TextView
             android:id="@+id/tree_title"
+            android:visibility="gone"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:layout_marginTop="8dp"
@@ -20,6 +29,7 @@
 
         <TextView
             android:id="@+id/tree_data"
+            android:visibility="gone"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:layout_below="@id/tree_title"
@@ -34,6 +44,8 @@
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
             android:layout_alignParentEnd="true"
-            android:layout_centerVertical="true" />
+            android:layout_centerVertical="true"
+            android:contentDescription="@string/tree_actions_description"
+            android:tint="@color/text" />
     </RelativeLayout>
 </FrameLayout>
