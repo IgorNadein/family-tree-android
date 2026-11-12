@@ -420,64 +420,67 @@ public class U {
      * Extracts only digits from a string that can also contain letters.
      */
     public static int extractNum(String id) {
-        //return Integer.parseInt(id.replaceAll("\\D+", "")); // Too slow
+        if (id == null) return 0;
+        // IDs now include UUIDs. Never overflow an int while parsing digits in
+        // a legacy ID, date or age; arbitrary random UUID digits are not numeric IDs.
+        if (id.matches("[A-Za-z]_([0-9a-fA-F]{32})")) return Integer.MAX_VALUE;
         int num = 0;
-        int x = 1;
-        for (int i = id.length() - 1; i >= 0; --i) {
-            int c = id.charAt(i);
-            if (c > 47 && c < 58) {
-                num += (c - 48) * x;
-                x *= 10; // To convert positional notation into a base-10 representation
+        for (int i = 0; i < id.length(); i++) {
+            char c = id.charAt(i);
+            if (c >= '0' && c <= '9') {
+                int digit = c - '0';
+                if (num > (Integer.MAX_VALUE - digit) / 10) return Integer.MAX_VALUE;
+                num = num * 10 + digit;
             }
         }
         return num;
     }
 
-    // Genera il nuovo ID seguente a quelli già esistenti
-    static int max;
+    /**
+     * A GEDCOM record ID is an immutable logical identity, not a sequence number.
+     * Independent devices must not both create I163 (or F55). Generate UUIDv4
+     * identifiers for every new record; preserve imported legacy IDs as-is.
+     */
+    public static String newID(Gedcom gc, Class classe, Gedcom... otherTrees) {
+        String prefix;
+        if (classe == Person.class) prefix = "I";
+        else if (classe == Family.class) prefix = "F";
+        else if (classe == Media.class) prefix = "M";
+        else if (classe == Note.class) prefix = "T";
+        else if (classe == Source.class) prefix = "S";
+        else if (classe == Repository.class) prefix = "R";
+        else if (classe == Submitter.class) prefix = "U";
+        else throw new IllegalArgumentException("Unsupported GEDCOM record class: " + classe);
 
-    public static String newID(Gedcom gc, Class classe) { // TODO: getNewId()
-        max = 0;
-        String pre = "";
-        if (classe == Note.class) {
-            pre = "T";
-            for (Note n : gc.getNotes())
-                calcolaMax(n);
-        } else if (classe == Submitter.class) {
-            pre = "U";
-            for (Submitter a : gc.getSubmitters())
-                calcolaMax(a);
-        } else if (classe == Repository.class) {
-            pre = "R";
-            for (Repository r : gc.getRepositories())
-                calcolaMax(r);
-        } else if (classe == Media.class) {
-            pre = "M";
-            for (Media m : gc.getMedia())
-                calcolaMax(m);
-        } else if (classe == Source.class) {
-            pre = "S";
-            for (Source f : gc.getSources())
-                calcolaMax(f);
-        } else if (classe == Person.class) {
-            pre = "I";
-            for (Person p : gc.getPeople())
-                calcolaMax(p);
-        } else if (classe == Family.class) {
-            pre = "F";
-            for (Family f : gc.getFamilies())
-                calcolaMax(f);
+        java.util.Set<String> occupied = new java.util.HashSet<>();
+        collectRecordIds(occupied, gc, classe);
+        for (Gedcom other : otherTrees) {
+            if (other != null) collectRecordIds(occupied, other, classe);
         }
-        return pre + (max + 1);
+        String candidate;
+        do {
+            candidate = prefix + "_" + java.util.UUID.randomUUID().toString().replace("-", "");
+        } while (occupied.contains(candidate));
+        return candidate;
     }
 
-    private static void calcolaMax(Object object) {
-        try {
-            String idStringa = (String)object.getClass().getMethod("getId").invoke(object);
-            int num = extractNum(idStringa);
-            if (num > max) max = num;
-        } catch (Exception e) {
-            e.printStackTrace();
+    private static void collectRecordIds(java.util.Set<String> ids, Gedcom tree, Class classe) {
+        java.util.List<?> records;
+        if (classe == Person.class) records = tree.getPeople();
+        else if (classe == Family.class) records = tree.getFamilies();
+        else if (classe == Media.class) records = tree.getMedia();
+        else if (classe == Note.class) records = tree.getNotes();
+        else if (classe == Source.class) records = tree.getSources();
+        else if (classe == Repository.class) records = tree.getRepositories();
+        else if (classe == Submitter.class) records = tree.getSubmitters();
+        else return;
+        for (Object record : records) {
+            try {
+                Object id = record.getClass().getMethod("getId").invoke(record);
+                if (id instanceof String) ids.add((String) id);
+            } catch (ReflectiveOperationException exception) {
+                throw new IllegalStateException("Unable to inspect GEDCOM record ID", exception);
+            }
         }
     }
 
