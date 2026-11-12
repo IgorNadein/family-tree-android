@@ -81,7 +81,9 @@ data class MergePreview(
     val incoming: VersionedTreeArchive,
     val commonAncestorId: String,
     val changes: Int,
-    val conflicts: List<MergeConflict>
+    val conflicts: List<MergeConflict>,
+    val reassignedPeople: Int = 0,
+    val reassignedFamilies: Int = 0
 )
 
 /**
@@ -96,13 +98,16 @@ object GedcomThreeWayMerge {
     data class Result(
         val merged: JsonObject,
         val conflicts: List<MergeConflict>,
-        val changes: Int
+        val changes: Int,
+        val reassignedPeople: Int = 0,
+        val reassignedFamilies: Int = 0
     )
 
     fun merge(baseJson: String, localJson: String, incomingJson: String, choices: Map<String, MergeChoice> = emptyMap()): Result {
         val base = jsonObject(baseJson)
         val local = jsonObject(localJson)
-        val incoming = jsonObject(incomingJson)
+        val collisionFix = rewriteNewRecordIdCollisions(base, local, jsonObject(incomingJson))
+        val incoming = collisionFix.snapshot
         val merged = JsonObject()
         val conflicts = mutableListOf<MergeConflict>()
         var changes = 0
@@ -137,7 +142,96 @@ object GedcomThreeWayMerge {
                 if (value != l) changes++
             }
         }
-        return Result(merged, conflicts, changes)
+        return Result(merged, conflicts, changes,
+            collisionFix.peopleRenamed, collisionFix.familiesRenamed)
+    }
+
+    private data class CollisionFix(
+        val snapshot: JsonObject, val peopleRenamed: Int, val familiesRenamed: Int
+    )
+
+    /**
+     * Two devices may assign I140 or F47 to unrelated new records after a split.
+     * Never interpret a matching numeric ID as proof of the same individual.
+     * Keep the original commits untouched; only re-key the incoming checkout
+     * used to construct the new merge commit. All references must follow.
+     */
+    private fun rewriteNewRecordIdCollisions(
+        base: JsonObject, local: JsonObject, incoming: JsonObject
+    ): CollisionFix {
+        val snapshot = incoming.deepCopy()
+        val replacements = linkedMapOf<String, String>()
+        var peopleRenamed = 0
+        var familiesRenamed = 0
+        for ((collection, prefix) in listOf("people" to "I", "families" to "F")) {
+            val ancestorIds = indexRecords(base.get(collection)).keys
+            val ours = indexRecords(local.get(collection))
+            val theirs = indexRecords(incoming.get(collection))
+            val reserved = (ancestorIds + ours.keys + theirs.keys).toMutableSet()
+            // A synthetic ID is stable across preview/apply and independent of
+            // whichever numeric IDs happen to exist on this device.
+            val originalSnapshotDigest = MessageDigest.getInstance("SHA-256")
+                .digest(incoming.toString().toByteArray(Charsets.UTF_8))
+                .joinToString("") { "%02x".format(it) }
+            fun hasRemappedPersonReference(element: JsonElement): Boolean = when {
+                element.isJsonArray -> element.asJsonArray.any(::hasRemappedPersonReference)
+                element.isJsonObject -> {
+                    val obj = element.asJsonObject
+                    obj.get("ref")?.let { it.isJsonPrimitive && it.asString in replacements } == true ||
+                        obj.entrySet().any { hasRemappedPersonReference(it.value) }
+                }
+                else -> false
+            }
+            val colliding = theirs.keys.filter { id ->
+                id !in ancestorIds && id in ours && (ours[id] != theirs[id] ||
+                    (collection == "families" && hasRemappedPersonReference(theirs.getValue(id))))
+            }
+            val newIds = linkedMapOf<String, String>()
+            for (id in colliding) {
+                var attempt = 0
+                var replacement: String
+                do {
+                    val data = "$collection/$originalSnapshotDigest/$id/$attempt"
+                    val hash = MessageDigest.getInstance("SHA-256")
+                        .digest(data.toByteArray(Charsets.UTF_8))
+                        .joinToString("") { "%02x".format(it) }
+                    replacement = prefix + "_" + hash.take(32)
+                    attempt++
+                } while (replacement in reserved)
+                newIds[id] = replacement
+                reserved += replacement
+            }
+            if (newIds.isNotEmpty()) {
+                snapshot.getAsJsonArray(collection)?.forEach { item ->
+                    val record = item.asJsonObject
+                    newIds[record.get("id").asString]?.let { record.addProperty("id", it) }
+                }
+                replacements.putAll(newIds)
+            }
+            if (collection == "people") peopleRenamed = newIds.size
+            else familiesRenamed = newIds.size
+        }
+
+        if (replacements.isNotEmpty()) {
+            // Only GEDCOM reference fields are identifiers. A free-text note
+            // that mentions I163 is historical content and must not be rewritten:
+            // doing so changes unrelated ancestral records and creates conflicts.
+            fun updateReferences(element: JsonElement) {
+                when {
+                    element.isJsonArray -> element.asJsonArray.forEach(::updateReferences)
+                    element.isJsonObject -> {
+                        val obj = element.asJsonObject
+                        val ref = obj.get("ref")
+                        if (ref != null && ref.isJsonPrimitive && ref.asJsonPrimitive.isString) {
+                            replacements[ref.asString]?.let { obj.addProperty("ref", it) }
+                        }
+                        obj.entrySet().forEach { updateReferences(it.value) }
+                    }
+                }
+            }
+            updateReferences(snapshot)
+        }
+        return CollisionFix(snapshot, peopleRenamed, familiesRenamed)
     }
 
     private val records = setOf("people", "families", "notes", "sources", "media", "repositories", "submitters")
@@ -167,7 +261,7 @@ object GedcomThreeWayMerge {
         // The GEDCOM header is rewritten with a new dateTime on every save.
         // Two independent edits to different people must not conflict merely
         // because both applications stamped their own save timestamp.
-        if (collection == "root" && id == "header") {
+        if (collection == "root" && (id == "header" || id == "head")) {
             val b = headerWithoutVolatileFields(base)
             val l = headerWithoutVolatileFields(local)
             val r = headerWithoutVolatileFields(incoming)
@@ -190,15 +284,54 @@ object GedcomThreeWayMerge {
             }
             return merged
         }
+        // A person can belong to multiple spouse families; children added to
+        // the same unchanged family can likewise be accumulated. Only union
+        // truly append-only ref lists; changes/removals still need review.
+        if ((collection.startsWith("people/") && id == "fams") ||
+            (collection.startsWith("families/") && id == "childRefs")) {
+            appendOnlyReferenceUnion(base, local, incoming)?.let { return it }
+        }
         val conflict = MergeConflict(collection, id, base, local, incoming)
         conflicts += conflict
         return if (choices[conflict.key] == MergeChoice.INCOMING) incoming else local
+    }
+
+    private fun appendOnlyReferenceUnion(
+        base: JsonElement?, local: JsonElement?, incoming: JsonElement?
+    ): JsonArray? {
+        fun entries(value: JsonElement?): LinkedHashMap<String, JsonObject>? {
+            if (value != null && !value.isJsonNull && !value.isJsonArray) return null
+            val refs = linkedMapOf<String, JsonObject>()
+            for (element in (value?.takeIf { it.isJsonArray }?.asJsonArray ?: JsonArray())) {
+                if (!element.isJsonObject) return null
+                val ref = element.asJsonObject.get("ref") ?: return null
+                if (!ref.isJsonPrimitive || !ref.asJsonPrimitive.isString ||
+                    refs.putIfAbsent(ref.asString, element.asJsonObject) != null) return null
+            }
+            return refs
+        }
+        val b = entries(base) ?: return null
+        val l = entries(local) ?: return null
+        val r = entries(incoming) ?: return null
+        // If an old relation was removed or edited, it is a genuine conflict.
+        if (b.any { (id, value) -> l[id] != value || r[id] != value }) return null
+        // A shared newly-added relationship with conflicting details must be reviewed.
+        if (l.any { (id, value) -> r[id] != null && r[id] != value }) return null
+        return JsonArray().also { array ->
+            l.values.forEach { array.add(it.deepCopy()) }
+            r.filterKeys { it !in l }.values.forEach { array.add(it.deepCopy()) }
+        }
     }
 
     private fun headerWithoutVolatileFields(value: JsonElement?): JsonElement? {
         if (value == null || !value.isJsonObject) return value
         val result = value.asJsonObject.deepCopy()
         result.remove("dateTime")
+        result.remove("date") // GEDCOM JSON encodes the header as "head.date"
+        val source = result.get("sour")
+        if (source != null && source.isJsonObject) {
+            source.asJsonObject.remove("vers")
+        }
         val generator = result.get("generator")
         if (generator != null && generator.isJsonObject) {
             generator.asJsonObject.remove("version")
@@ -480,7 +613,8 @@ class VersionedTreeStore(private val filesDir: File, private val mediaAccess: Tr
                 val result = GedcomThreeWayMerge.merge(base.snapshotJson, ours.snapshotJson, theirs.snapshotJson)
                 val files = mergeMedia(base.media.orEmpty(), ours.media.orEmpty(), theirs.media.orEmpty())
                 MergePreview(treeId, local.head, incoming, common,
-                    result.changes + files.changes, result.conflicts + files.conflicts)
+                    result.changes + files.changes, result.conflicts + files.conflicts,
+                    result.reassignedPeople, result.reassignedFamilies)
             }
         }
 
@@ -796,7 +930,9 @@ class VersionedTreeStore(private val filesDir: File, private val mediaAccess: Tr
     }
 
     private fun validateCommit(commit: SnapshotCommit) {
-        require(hashPattern.matches(commit.id) && expectedId(commit) == commit.id) { "Corrupt .ftree history hash" }
+        require(hashPattern.matches(commit.id) && expectedId(commit) == commit.id) {
+            "Corrupt .ftree history hash at " + commit.id.take(12)
+        }
         require(commit.parents.size <= 2 && commit.parents.distinct().size == commit.parents.size &&
                 commit.parents.all(hashPattern::matches)) { "Invalid history parents" }
         require(commit.author.length <= 256) { "History author too long" }

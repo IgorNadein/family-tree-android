@@ -135,12 +135,21 @@ class VersionedTreeArchiveTest {
         assertEquals("2021", merged.merged.getAsJsonObject("header").get("dateTime").asString)
     }
 
-    @Test fun simultaneousNewPersonIdCollisionIsReportedAsConflict() {
+    @Test fun simultaneousNewPersonIdCollisionPreservesBothPeople() {
         val base = tree("I1" to "Маша")
         val mine = tree("I1" to "Маша", "I2" to "Пётр")
         val theirs = tree("I1" to "Маша", "I2" to "Сергей")
         val result = GedcomThreeWayMerge.merge(base, mine, theirs)
-        assertEquals(listOf("people/I2"), result.conflicts.map { it.key })
+        assertEquals(1, result.reassignedPeople)
+        assertTrue(result.conflicts.isEmpty())
+        val names = names(result.merged.toString())
+        val moved = names.keys.single { it != "I1" && it != "I2" }
+        assertTrue(moved.matches(Regex("I_[0-9a-f]{32}")))
+        assertEquals("Маша", names["I1"])
+        assertEquals("Пётр", names["I2"])
+        assertEquals("Сергей", names[moved])
+        // Both merge preview and commit apply must resolve to the same IDs.
+        assertEquals(result.merged, GedcomThreeWayMerge.merge(base, mine, theirs).merged)
     }
 
     @Test fun refusesUnrelatedTreesAndStaleMergePreview() = runBlocking {
@@ -235,6 +244,35 @@ class VersionedTreeArchiveTest {
         assertEquals(1, repo.history(1).size)
     }
 
+
+    @Test fun mergedLegacyCollisionCanBeSharedBackToTheOtherDevice() = runBlocking {
+        val leftDir = temp.newFolder("legacyLeft")
+        val rightDir = temp.newFolder("legacyRight")
+        val left = VersionedTreeStore(leftDir)
+        val right = VersionedTreeStore(rightDir)
+        val baseline = tree("I1" to "Мария")
+        val original = left.inspect(ByteArrayInputStream(export(left, 1, baseline)))
+        right.importNew(5, original)
+        val ours = tree("I1" to "Мария", "I2" to "Гарник")
+        val theirs = tree("I1" to "Мария", "I2" to "Павел")
+        File(leftDir, "1.json").writeText(ours)
+        left.record(1, ours)
+        File(rightDir, "5.json").writeText(theirs)
+        right.record(5, theirs)
+        val incoming = left.inspect(ByteArrayInputStream(export(right, 5, theirs)))
+        val preview = left.planMerge(1, ours, incoming)
+        assertEquals(1, preview.reassignedPeople)
+        assertTrue(preview.conflicts.toString(), preview.conflicts.isEmpty())
+        assertTrue(left.applyMerge(preview, emptyMap()))
+        val mergedJson = File(leftDir, "1.json").readText()
+        assertEquals(3, names(mergedJson).size)
+        val shared = right.inspect(ByteArrayInputStream(export(left, 1, mergedJson)))
+        val secondPreview = right.planMerge(5, theirs, shared)
+        assertTrue(secondPreview.conflicts.toString(), secondPreview.conflicts.isEmpty())
+        assertTrue(right.applyMerge(secondPreview, emptyMap()))
+        assertEquals(names(mergedJson), names(File(rightDir, "5.json").readText()))
+    }
+
     @Test fun orphanedFilesCannotBeOverwrittenByAutomaticIdSelection() = runBlocking {
         val folder = temp.newFolder("orphanIds")
         val store = VersionedTreeStore(folder)
@@ -315,6 +353,54 @@ class VersionedTreeArchiveTest {
         destination.importNew(8, archive)
         assertEquals(203, destination.history(8).size)
         assertEquals(latest, destination.history(8).first().snapshotJson)
+    }
+
+
+    @Test fun clashingNewIdsKeepBothDistinctFamiliesAndFixReferences() = runBlocking {
+        val baseline = """{"people":[{"id":"I1","names":[{"value":"Мария"}]}],"families":[]}"""
+        val ours = """{"people":[{"id":"I1","names":[{"value":"Мария"}],"fams":[{"ref":"F1"}]},{"id":"I2","names":[{"value":"Гарник"}],"fams":[{"ref":"F1"}]}],"families":[{"id":"F1","husbandRefs":[{"ref":"I2"}],"wifeRefs":[{"ref":"I1"}]}]}"""
+        val theirs = """{"people":[{"id":"I1","names":[{"value":"Мария"}],"fams":[{"ref":"F1"}]},{"id":"I2","names":[{"value":"Павел"}],"fams":[{"ref":"F1"}],"notes":[{"value":"Связан с I2 в F1"}]}],"families":[{"id":"F1","wifeRefs":[{"ref":"I1"}],"husbandRefs":[{"ref":"I2"}]}]}"""
+        val result = GedcomThreeWayMerge.merge(baseline, ours, theirs)
+        assertEquals(1, result.reassignedPeople)
+        assertEquals(1, result.reassignedFamilies)
+        assertTrue(result.conflicts.toString(), result.conflicts.isEmpty())
+        val people = result.merged.getAsJsonArray("people").map { it.asJsonObject }
+            .associateBy { it.get("id").asString }
+        val families = result.merged.getAsJsonArray("families").map { it.asJsonObject }
+            .associateBy { it.get("id").asString }
+        assertEquals(3, people.size)
+        assertEquals(2, families.size)
+        val newPersonId = people.keys.single { it != "I1" && it != "I2" }
+        val newFamilyId = families.keys.single { it != "F1" }
+        assertTrue(newPersonId.matches(Regex("I_[0-9a-f]{32}")))
+        assertTrue(newFamilyId.matches(Regex("F_[0-9a-f]{32}")))
+        assertEquals("Гарник", people.getValue("I2").getAsJsonArray("names")[0].asJsonObject.get("value").asString)
+        assertEquals("Павел", people.getValue(newPersonId).getAsJsonArray("names")[0].asJsonObject.get("value").asString)
+        assertEquals(newPersonId, families.getValue(newFamilyId).getAsJsonArray("husbandRefs")[0].asJsonObject.get("ref").asString)
+        assertEquals(newFamilyId, people.getValue(newPersonId).getAsJsonArray("fams")[0].asJsonObject.get("ref").asString)
+        assertEquals(2, people.getValue("I1").getAsJsonArray("fams").size())
+        // Free-text historical citations are preserved, not silently rewritten.
+        assertEquals("Связан с I2 в F1",
+            people.getValue(newPersonId).getAsJsonArray("notes")[0].asJsonObject.get("value").asString)
+        val store = VersionedTreeStore(temp.newFolder("collisionGEDCOM"))
+        store.record(1, result.merged.toString())
+        Unit
+    }
+
+    @Test fun actualConcurrentNoteEditsStillRequireExplicitReview() {
+        val base = """{"people":[{"id":"I1","notes":[{"value":"Из архива"}]}]}"""
+        val ours = """{"people":[{"id":"I1","notes":[{"value":"Уточнение 1"}]}]}"""
+        val incoming = """{"people":[{"id":"I1","notes":[{"value":"Уточнение 2"}]}]}"""
+        val merged = GedcomThreeWayMerge.merge(base, ours, incoming)
+        assertEquals(listOf("people/I1/notes"), merged.conflicts.map { it.key })
+    }
+
+    @Test fun dateAndAppVersionInGedcomHeaderAreNotDataConflicts() {
+        val base = """{"head":{"date":{"value":"1 JAN 2020"},"sour":{"vers":"0.2.2"},"file":"1.json"},"people":[]}"""
+        val ours = """{"head":{"date":{"value":"3 JAN 2020"},"sour":{"vers":"0.2.4"},"file":"1.json"},"people":[]}"""
+        val incoming = """{"head":{"date":{"value":"2 JAN 2020"},"sour":{"vers":"0.2.3"},"file":"1.json"},"people":[]}"""
+        val result = GedcomThreeWayMerge.merge(base, ours, incoming)
+        assertTrue(result.conflicts.toString(), result.conflicts.isEmpty())
     }
 
 }
