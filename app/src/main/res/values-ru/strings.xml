@@ -453,4 +453,5 @@
     <string name="ftree_recover_confirm">Файлы и история сохранились, но дерево пропало из списка. Вернуть его в список без изменения данных?</string>
     <string name="ftree_recovered_name">Восстановленное дерево №%1$d</string>
     <string name="ftree_recover_completed">Дерево возвращено в список.</string>
+    <string name="ftree_reassigned_ids">Пересекающиеся ID новых записей переназначены: %1$d человек, %2$d семей. Обе ветви и их связи будут сохранены. Проверьте оставшиеся конфликты перед сохранением.</string>
 </resources>

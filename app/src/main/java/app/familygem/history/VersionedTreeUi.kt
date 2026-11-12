@@ -37,7 +37,12 @@ object VersionedTreeUi {
                 }
             }
             result.onSuccess { plan ->
-                val summary = activity.getString(R.string.ftree_merge_summary, archive.title, plan.changes, plan.conflicts.size)
+                val summary = activity.getString(
+                    R.string.ftree_merge_summary, archive.title, plan.changes, plan.conflicts.size
+                ) + if (plan.reassignedPeople + plan.reassignedFamilies > 0)
+                    "\n\n" + activity.getString(R.string.ftree_reassigned_ids,
+                        plan.reassignedPeople, plan.reassignedFamilies)
+                else ""
                 AlertDialog.Builder(activity)
                     .setTitle(R.string.ftree_merge_title)
                     .setMessage(summary)
