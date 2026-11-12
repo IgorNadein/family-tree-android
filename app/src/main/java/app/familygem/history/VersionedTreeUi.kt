@@ -137,10 +137,8 @@ object VersionedTreeUi {
         activity.lifecycleScope.launch {
             val result = runCatching {
                 withContext(Dispatchers.IO) {
-                    val id = Global.settings.max() + 1
                     val store = VersionedTreeStore(activity.filesDir, AndroidTreeMediaAccess(activity))
-                    store.importNew(id, archive)
-                    id
+                    store.importAsNew(Global.settings.trees.map { it.id }, archive)
                 }
             }
             result.onSuccess { id ->

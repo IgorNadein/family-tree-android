@@ -84,6 +84,21 @@
                 <data android:pathPattern=".*\\..*\\..*\\..*\\..*\\..*\\.GED" />
                 <data android:pathPattern=".*\\..*\\..*\\..*\\..*\\..*\\..*\\.GED" />
             </intent-filter>
+            <!-- Keep .ftree files out of the GEDCOM parser. Some file managers
+                 send application/zip or application/octet-stream as MIME. -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="file" />
+                <data android:scheme="content" />
+                <data android:host="*" />
+                <data android:mimeType="*/*" />
+                <data android:pathPattern=".*\\.ftree" />
+                <data android:pathPattern=".*\\..*\\.ftree" />
+                <data android:pathPattern=".*\\..*\\..*\\.ftree" />
+                <data android:pathPattern=".*\\.FTREE" />
+            </intent-filter>
         </activity>
         <activity
             android:name=".TreesActivity"

@@ -114,7 +114,7 @@ class VersionedTreeArchiveTest {
         val incoming = local.inspect(ByteArrayInputStream(export(remote, 2, theirs)))
         val plan = local.planMerge(1, ours, incoming)
         assertEquals(1, plan.conflicts.size)
-        assertEquals("people/I1", plan.conflicts.single().key)
+        assertEquals("people/I1/names", plan.conflicts.single().key)
         try {
             local.applyMerge(plan, emptyMap())
             fail("Conflict cannot be silently accepted")
@@ -122,7 +122,7 @@ class VersionedTreeArchiveTest {
             assertTrue(expected.message!!.contains("conflicts"))
         }
         assertEquals(ours, local.history(1).first().snapshotJson)
-        assertTrue(local.applyMerge(plan, mapOf("people/I1" to MergeChoice.INCOMING)))
+        assertTrue(local.applyMerge(plan, mapOf("people/I1/names" to MergeChoice.INCOMING)))
         assertEquals("Марина", names(local.history(1).first().snapshotJson)["I1"])
     }
 
@@ -234,4 +234,87 @@ class VersionedTreeArchiveTest {
         assertEquals(a.head, b.head)
         assertEquals(1, repo.history(1).size)
     }
+
+    @Test fun orphanedFilesCannotBeOverwrittenByAutomaticIdSelection() = runBlocking {
+        val folder = temp.newFolder("orphanIds")
+        val store = VersionedTreeStore(folder)
+        File(folder, "2.json").writeText("old family data")
+        File(folder, ".ftree-history/3").mkdirs()
+        assertEquals(4, store.nextAvailableTreeId(listOf(1)))
+        val source = VersionedTreeStore(temp.newFolder("sourceIds"))
+        val json = tree("I1" to "Настя")
+        val archive = source.inspect(ByteArrayInputStream(export(source, 1, json)))
+        val id = store.importAsNew(listOf(1), archive)
+        assertEquals(4, id)
+        assertEquals("old family data", File(folder, "2.json").readText())
+        assertTrue(File(folder, ".ftree-history/3").exists())
+        assertEquals(json, File(folder, "4.json").readText())
+    }
+
+    @Test fun orphanedTreeWithValidHistoryCanBeRecoveredWithoutTouchingFiles() = runBlocking {
+        val folder = temp.newFolder("recover")
+        val source = VersionedTreeStore(temp.newFolder("recoverSource"))
+        val json = tree("I1" to "Гарник")
+        val archive = source.inspect(ByteArrayInputStream(export(source, 1, json)))
+        val store = VersionedTreeStore(folder)
+        store.importNew(7, archive)
+        val candidates = store.findRecoverableTrees(listOf(1))
+        assertEquals(listOf(7), candidates.map { it.id })
+        assertEquals(1, candidates.single().peopleCount)
+        assertEquals(json, File(folder, "7.json").readText())
+        File(folder, "7.json").writeText(json + " ")
+        assertTrue(store.findRecoverableTrees(listOf(1)).isEmpty())
+    }
+
+    @Test fun independentlyChangedPersonFieldsMergeWithoutOverwritingEachOther() {
+        val base = """{"people":[{"id":"I1","names":[{"value":"Мария"}],"notes":[]}]}"""
+        val ours = """{"people":[{"id":"I1","names":[{"value":"Маша"}],"notes":[]}]}"""
+        val theirs = """{"people":[{"id":"I1","names":[{"value":"Мария"}],"notes":[{"value":"архив"}]}]}"""
+        val merged = GedcomThreeWayMerge.merge(base, ours, theirs)
+        assertTrue(merged.conflicts.isEmpty())
+        val person = merged.merged.getAsJsonArray("people")[0].asJsonObject
+        assertEquals("Маша", person.getAsJsonArray("names")[0].asJsonObject.get("value").asString)
+        assertEquals("архив", person.getAsJsonArray("notes")[0].asJsonObject.get("value").asString)
+    }
+
+    @Test fun differentUuidsWithSameVerifiedAncestorMayMerge() = runBlocking {
+        val leftDir = temp.newFolder("leftUuid")
+        val left = VersionedTreeStore(leftDir)
+        val rightDir = temp.newFolder("rightUuid")
+        val right = VersionedTreeStore(rightDir)
+        val baseline = tree("I1" to "Мария", "I2" to "Иван")
+        val source = left.inspect(ByteArrayInputStream(export(left, 1, baseline)))
+        right.importNew(5, source.copy(manifest = source.manifest.copy(
+            treeUuid = java.util.UUID.randomUUID().toString())))
+        val ours = tree("I1" to "Мария Львовна", "I2" to "Иван")
+        val theirs = tree("I1" to "Мария", "I2" to "Иван Васильевич")
+        left.record(1, ours)
+        File(leftDir, "1.json").writeText(ours)
+        right.record(5, theirs)
+        val incoming = left.inspect(ByteArrayInputStream(export(right, 5, theirs)))
+        assertNotEquals(source.manifest.treeUuid, incoming.manifest.treeUuid)
+        assertTrue(left.isMergeCandidate(1, incoming))
+        val preview = left.planMerge(1, ours, incoming)
+        assertTrue(preview.conflicts.isEmpty())
+        assertTrue(left.applyMerge(preview, emptyMap()))
+        assertEquals(mapOf("I1" to "Мария Львовна", "I2" to "Иван Васильевич"),
+            names(left.history(1).first().snapshotJson))
+        assertEquals(source.manifest.treeUuid, left.localIdentity(1))
+    }
+
+    @Test fun twoHundredThreeRevisionsSurviveExportAndImport() = runBlocking {
+        val source = VersionedTreeStore(temp.newFolder("largeHistorySource"))
+        var latest = ""
+        repeat(203) { i ->
+            latest = tree("I1" to "Мария $i")
+            source.record(1, latest)
+        }
+        val archive = source.inspect(ByteArrayInputStream(export(source, 1, latest)))
+        assertEquals(203, archive.commits.size)
+        val destination = VersionedTreeStore(temp.newFolder("largeHistoryDestination"))
+        destination.importNew(8, archive)
+        assertEquals(203, destination.history(8).size)
+        assertEquals(latest, destination.history(8).first().snapshotJson)
+    }
+
 }

@@ -452,4 +452,11 @@
     <string name="ftree_merge_existing">Merge into existing</string>
     <string name="ftree_error">Family tree history: %1$s</string>
     <string name="ftree_share_warning">This file contains private family information. The file is not encrypted. It includes photos and other attachments along with their history. Share only with people you trust.</string>
+    <string name="ftree_choose_merge_target">Choose tree to merge into</string>
+    <string name="ftree_recover_button">Recover an existing tree</string>
+    <string name="ftree_recover_title">Recover existing tree</string>
+    <string name="ftree_recover_entry">Tree #%1$d · %2$d people</string>
+    <string name="ftree_recover_confirm">The family data and history exist, but the tree is missing from the list. Restore the entry without changing its files?</string>
+    <string name="ftree_recovered_name">Recovered tree #%1$d</string>
+    <string name="ftree_recover_completed">Tree restored to your list.</string>
 </resources>
