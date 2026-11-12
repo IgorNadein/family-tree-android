@@ -446,4 +446,11 @@
     <string name="ftree_merge_existing">Объединить с существующим</string>
     <string name="ftree_error">История семейного древа: %1$s</string>
     <string name="ftree_share_warning">Этот файл содержит личные данные родственников. Файл не зашифрован и содержит фотографии и другие вложения вместе с историей их изменений. Передавайте его только доверенным людям.</string>
+    <string name="ftree_choose_merge_target">Выберите дерево для слияния</string>
+    <string name="ftree_recover_button">Восстановить найденное дерево</string>
+    <string name="ftree_recover_title">Восстановление дерева</string>
+    <string name="ftree_recover_entry">Дерево №%1$d · %2$d человек</string>
+    <string name="ftree_recover_confirm">Файлы и история сохранились, но дерево пропало из списка. Вернуть его в список без изменения данных?</string>
+    <string name="ftree_recovered_name">Восстановленное дерево №%1$d</string>
+    <string name="ftree_recover_completed">Дерево возвращено в список.</string>
 </resources>

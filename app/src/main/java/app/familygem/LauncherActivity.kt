@@ -3,6 +3,8 @@ package app.familygem
 import android.content.Intent
 import android.os.Build
 import android.os.Bundle
+import android.net.Uri
+import android.provider.OpenableColumns
 import android.util.Log
 import android.view.View
 import android.widget.Toast
@@ -19,6 +21,15 @@ import org.json.JSONObject
 
 /** Entry point of the app. */
 class LauncherActivity : AppCompatActivity() {
+
+    private fun isHistoryArchive(uri: Uri): Boolean {
+        if (uri.lastPathSegment?.endsWith(".ftree", ignoreCase = true) == true) return true
+        return runCatching {
+            contentResolver.query(uri, arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null)?.use {
+                it.moveToFirst() && it.getString(0)?.endsWith(".ftree", ignoreCase = true) == true
+            } ?: false
+        }.getOrDefault(false)
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -57,8 +68,15 @@ class LauncherActivity : AppCompatActivity() {
                 { progressView.visibility = View.GONE }
             } // The URI comes from a click on a .ged file
             else if (uri.scheme == "file" || uri.scheme == "content") {
-                lifecycleScope.launch(Dispatchers.Default) {
-                    TreeUtil.importGedcom(this@LauncherActivity, uri, startTrees, startTrees)
+                if (isHistoryArchive(uri)) {
+                    // The normal GEDCOM parser cannot read the ZIP-based .ftree format.
+                    // Keep the original content URI permission for the history importer.
+                    startActivity(Intent(this, NewTreeActivity::class.java)
+                        .setData(uri).addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION))
+                } else {
+                    lifecycleScope.launch(Dispatchers.Default) {
+                        TreeUtil.importGedcom(this@LauncherActivity, uri, startTrees, startTrees)
+                    }
                 }
             } else {
                 startTrees()

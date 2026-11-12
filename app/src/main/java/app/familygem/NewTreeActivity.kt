@@ -23,6 +23,7 @@ import androidx.lifecycle.lifecycleScope
 import app.familygem.databinding.NewTreeActivityBinding
 import app.familygem.history.VersionedTreeStore
 import app.familygem.history.VersionedTreeUi
+import app.familygem.history.RecoverableTree
 import app.familygem.history.VersionedTreeArchive
 import app.familygem.util.FileUtil
 import app.familygem.util.TreeUtil
@@ -147,24 +148,41 @@ class NewTreeActivity : BaseActivity(R.string.new_tree) {
         // A history archive preserves a tree's UUID so further changes can
         // be exchanged without a server and merged by a common ancestor.
         val ftreeLauncher = registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
-            if (uri != null) {
-                progressView.visibility = View.VISIBLE
-                lifecycleScope.launch {
-                    val result = runCatching {
-                        withContext(IO) {
-                            contentResolver.openInputStream(uri)?.use {
-                                VersionedTreeStore(filesDir).inspect(it)
-                            } ?: error("Unable to read .ftree archive")
-                        }
-                    }
-                    progressView.visibility = View.GONE
-                    result.onSuccess { archive -> confirmImportArchive(archive) }
-                        .onFailure { VersionedTreeUi.showError(this@NewTreeActivity, it) }
-                }
-            }
+            if (uri != null) openHistoryArchive(uri)
         }
         findViewById<Button>(R.id.new_import_ftree).setOnClickListener {
             ftreeLauncher.launch(arrayOf("*/*"))
+        }
+        // An interrupted import can leave complete files but no settings entry.
+        // Offer recovery; never remove or overwrite the original records.
+        val restoreButton = findViewById<Button>(R.id.new_recover_orphan)
+        restoreButton.visibility = View.GONE
+        lifecycleScope.launch {
+            val orphans = withContext(IO) {
+                VersionedTreeStore(filesDir).findRecoverableTrees(Global.settings.trees.map { it.id })
+            }
+            if (orphans.isNotEmpty()) {
+                restoreButton.visibility = View.VISIBLE
+                restoreButton.setOnClickListener { showRecoverableTrees(orphans) }
+            }
+        }
+        // Also accept an .ftree opened from a file manager via LauncherActivity.
+        if (savedInstanceState == null) intent.data?.let { openHistoryArchive(it) }
+    }
+
+    private fun openHistoryArchive(uri: Uri) {
+        progressView.visibility = View.VISIBLE
+        lifecycleScope.launch {
+            val result = runCatching {
+                withContext(IO) {
+                    contentResolver.openInputStream(uri)?.use {
+                        VersionedTreeStore(filesDir).inspect(it)
+                    } ?: error("Unable to read .ftree archive")
+                }
+            }
+            progressView.visibility = View.GONE
+            result.onSuccess { archive -> confirmImportArchive(archive) }
+                .onFailure { VersionedTreeUi.showError(this@NewTreeActivity, it) }
         }
     }
 
@@ -173,11 +191,11 @@ class NewTreeActivity : BaseActivity(R.string.new_tree) {
             val store = VersionedTreeStore(filesDir)
             val matchingTreeIds = withContext(IO) {
                 Global.settings.trees.filter { tree ->
-                    store.localIdentity(tree.id) == archive.manifest.treeUuid
+                    store.isMergeCandidate(tree.id, archive)
                 }.map { it.id }
             }
-            // A merge target must be unambiguous. If several clones exist,
-            // users can select the intended one in its own three-dot menu.
+            // Different UUIDs are OK only when verified commits share a common
+            // ancestor. Never silently choose between two registered clones.
             val existingId = matchingTreeIds.singleOrNull()
             val builder = AlertDialog.Builder(this@NewTreeActivity)
                 .setTitle(R.string.ftree_import_button)
@@ -197,6 +215,29 @@ class NewTreeActivity : BaseActivity(R.string.new_tree) {
                         onBackPressedDispatcher.onBackPressed()
                     }
                 }
+            } else if (matchingTreeIds.isNotEmpty()) {
+                builder.setPositiveButton(R.string.ftree_merge_existing) { _, _ ->
+                    val options = matchingTreeIds.map { id ->
+                        val name = Global.settings.getTree(id)?.title ?: getString(R.string.app_name)
+                        "$name (#$id)"
+                    }.toTypedArray()
+                    AlertDialog.Builder(this@NewTreeActivity)
+                        .setTitle(R.string.ftree_choose_merge_target)
+                        .setItems(options) { _, which ->
+                            VersionedTreeUi.reviewMerge(this@NewTreeActivity, matchingTreeIds[which], archive) {
+                                startActivity(Intent(this@NewTreeActivity, TreesActivity::class.java))
+                                finish()
+                            }
+                        }
+                        .setNegativeButton(R.string.cancel) { _, _ -> archive.release() }
+                        .setOnCancelListener { archive.release() }
+                        .show()
+                }
+                builder.setNeutralButton(R.string.ftree_import_as_new) { _, _ ->
+                    VersionedTreeUi.importAsNew(this@NewTreeActivity, archive) {
+                        onBackPressedDispatcher.onBackPressed()
+                    }
+                }
             } else {
                 builder.setPositiveButton(R.string.ftree_import_as_new) { _, _ ->
                     VersionedTreeUi.importAsNew(this@NewTreeActivity, archive) {
@@ -208,16 +249,66 @@ class NewTreeActivity : BaseActivity(R.string.new_tree) {
         }
     }
 
+    private fun showRecoverableTrees(orphans: List<RecoverableTree>) {
+        val labels = orphans.map { getString(R.string.ftree_recover_entry, it.id, it.peopleCount) }
+        AlertDialog.Builder(this)
+            .setTitle(R.string.ftree_recover_title)
+            .setItems(labels.toTypedArray()) { _, index ->
+                val selected = orphans[index]
+                AlertDialog.Builder(this)
+                    .setTitle(R.string.ftree_recover_title)
+                    .setMessage(R.string.ftree_recover_confirm)
+                    .setPositiveButton(R.string.ftree_recover_button) { _, _ ->
+                        lifecycleScope.launch {
+                            val result = runCatching {
+                                val json = withContext(IO) {
+                                    File(filesDir, selected.id.toString() + ".json").readText()
+                                }
+                                val gedcom = JsonParser().fromJson(json).apply { createIndexes() }
+                                check(Global.settings.getTree(selected.id) == null) {
+                                    "Tree is already registered"
+                                }
+                                val title = getString(R.string.ftree_recovered_name, selected.id)
+                                val tree = Settings.Tree(selected.id, title,
+                                    gedcom.people.size, 0, null, null, null, 0)
+                                Global.settings.addTree(tree)
+                                TreeUtil.refreshData(gedcom, tree)
+                                Global.settings.openTree = selected.id
+                                Global.settings.save()
+                                Global.gc = gedcom
+                                Global.shouldSave = false
+                            }
+                            result.onSuccess {
+                                Toast.makeText(this@NewTreeActivity,
+                                    R.string.ftree_recover_completed, Toast.LENGTH_LONG).show()
+                                startActivity(Intent(this@NewTreeActivity, TreesActivity::class.java))
+                                finish()
+                            }.onFailure { VersionedTreeUi.showError(this@NewTreeActivity, it) }
+                        }
+                    }
+                    .setNegativeButton(R.string.cancel, null)
+                    .show()
+            }
+            .setNegativeButton(R.string.cancel, null)
+            .show()
+    }
+
     /** Creates a brand new tree with the provided title. */
     private fun createNewTree(title: String) {
-        val num = Global.settings.max() + 1
+        val num = VersionedTreeStore(filesDir).nextAvailableTreeId(Global.settings.trees.map { it.id })
         val jsonFile = File(filesDir, "$num.json")
         Global.gc = Gedcom()
         Global.gc.header = TreeUtil.createHeader(jsonFile.name)
         Global.gc.createIndexes()
         val parser = JsonParser()
         try {
-            FileUtils.writeStringToFile(jsonFile, parser.toJson(Global.gc), "UTF-8")
+            check(jsonFile.createNewFile()) { "Tree already exists" }
+            try {
+                jsonFile.writeText(parser.toJson(Global.gc), Charsets.UTF_8)
+            } catch (e: Exception) {
+                jsonFile.delete() // Only our newly created empty file, never an older tree.
+                throw e
+            }
         } catch (e: Exception) {
             Toast.makeText(this, e.localizedMessage, Toast.LENGTH_LONG).show()
             return

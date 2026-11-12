@@ -73,6 +73,8 @@ data class MergeConflict(
     val key: String get() = "$collection/$recordId"
 }
 
+data class RecoverableTree(val id: Int, val peopleCount: Int, val treeUuid: String)
+
 data class MergePreview(
     val treeId: Int,
     val localHead: String,
@@ -171,6 +173,22 @@ object GedcomThreeWayMerge {
             val r = headerWithoutVolatileFields(incoming)
             if (r == b || r == l) return local
             if (l == b) return incoming
+        }
+        // Preserve independent changes to different properties of a GEDCOM record.
+        // Lists are atomic: combining parent/child references automatically is unsafe.
+        if (collection != "root" && base is JsonObject && local is JsonObject && incoming is JsonObject) {
+            val merged = JsonObject()
+            val keys = linkedSetOf<String>().also {
+                it += base.keySet()
+                it += local.keySet()
+                it += incoming.keySet()
+            }
+            for (field in keys) {
+                val value = pick("$collection/$id", field, base.get(field),
+                    local.get(field), incoming.get(field), choices, conflicts)
+                if (value != null) merged.add(field, value.deepCopy())
+            }
+            return merged
         }
         val conflict = MergeConflict(collection, id, base, local, incoming)
         conflicts += conflict
@@ -368,33 +386,86 @@ class VersionedTreeStore(private val filesDir: File, private val mediaAccess: Tr
         lock.withLock { readManifest(treeId)?.treeUuid }
     }
 
-    suspend fun importNew(treeId: Int, archive: VersionedTreeArchive) = withContext(Dispatchers.IO) {
-        lock.withLock {
-            require(!treeFile(treeId).exists() && !directory(treeId).exists()) { "Tree already exists" }
-            validateArchive(archive)
-            // Never overwrite an existing tree, even if something goes wrong.
-            try {
-                installBlobs(treeId, archive)
-                installCommits(treeId, archive.commits)
-                checkout(treeId, archive.headCommit().media.orEmpty())
-                writeAtomic(treeFile(treeId), archive.headCommit().snapshotJson)
-                writeAtomic(manifestFile(treeId), gson.toJson(archive.manifest))
-            } catch (e: Exception) {
-                treeFile(treeId).delete()
-                directory(treeId).deleteRecursively()
-                throw e
+    /** Check the disk, not just settings: failed imports may leave orphaned files. */
+    fun nextAvailableTreeId(registeredIds: Collection<Int>): Int {
+        var id = (registeredIds.maxOrNull() ?: 0) + 1
+        require(id > 0) { "No available tree identifier" }
+        while (id in registeredIds || treeFile(id).exists() || directory(id).exists()) {
+            require(id < Int.MAX_VALUE) { "No available tree identifier" }
+            id++
+        }
+        return id
+    }
+
+    /** Allocates and imports under one lock to prevent concurrent collisions. */
+    suspend fun importAsNew(registeredIds: Collection<Int>, archive: VersionedTreeArchive): Int =
+        withContext(Dispatchers.IO) {
+            lock.withLock {
+                val id = nextAvailableTreeId(registeredIds)
+                importNewLocked(id, archive)
+                id
             }
         }
+
+    suspend fun importNew(treeId: Int, archive: VersionedTreeArchive) = withContext(Dispatchers.IO) {
+        lock.withLock { importNewLocked(treeId, archive) }
     }
+
+    private fun importNewLocked(treeId: Int, archive: VersionedTreeArchive) {
+        require(!treeFile(treeId).exists() && !directory(treeId).exists()) { "Tree already exists" }
+        validateArchive(archive)
+        try {
+            installBlobs(treeId, archive)
+            installCommits(treeId, archive.commits)
+            checkout(treeId, archive.headCommit().media.orEmpty())
+            writeAtomic(treeFile(treeId), archive.headCommit().snapshotJson)
+            writeAtomic(manifestFile(treeId), gson.toJson(archive.manifest))
+        } catch (e: Exception) {
+            treeFile(treeId).delete()
+            directory(treeId).deleteRecursively()
+            throw e
+        }
+    }
+
+    /** Only complete, valid trees absent from settings can be recovered. */
+    suspend fun findRecoverableTrees(registeredIds: Collection<Int>): List<RecoverableTree> =
+        withContext(Dispatchers.IO) {
+            lock.withLock {
+                val listed = registeredIds.toSet()
+                filesDir.listFiles().orEmpty().mapNotNull { file ->
+                    val id = file.name.removeSuffix(".json").toIntOrNull()
+                    if (id == null || !file.name.endsWith(".json") || id <= 0 ||
+                        id in listed || !file.isFile) return@mapNotNull null
+                    runCatching {
+                        val manifest = readManifest(id) ?: return@runCatching null
+                        val head = readCommit(id, manifest.head)
+                        val json = file.readText(Charsets.UTF_8)
+                        if (json != head.snapshotJson) return@runCatching null
+                        validateGedcom(json)
+                        val count = GedcomJsonParser().fromJson(json).people.size
+                        RecoverableTree(id, count, manifest.treeUuid)
+                    }.getOrNull()
+                }.sortedBy { it.id }
+            }
+        }
+
+    /** Same UUID or common reachable SHA-256 commit, never a name-based guess. */
+    suspend fun isMergeCandidate(treeId: Int, incoming: VersionedTreeArchive): Boolean =
+        withContext(Dispatchers.IO) {
+            lock.withLock {
+                val manifest = readManifest(treeId) ?: return@withLock false
+                if (manifest.treeUuid == incoming.manifest.treeUuid) return@withLock true
+                val incomingIds = incoming.commits.map { it.id }.toSet()
+                if (incomingIds.none { commitFile(treeId, it).isFile }) return@withLock false
+                collectReachable(treeId, manifest.head).keys.any { it in incomingIds }
+            }
+        }
 
     suspend fun planMerge(treeId: Int, currentJson: String, incoming: VersionedTreeArchive): MergePreview =
         withContext(Dispatchers.IO) {
             lock.withLock {
                 validateArchive(incoming)
                 val local = recordLocked(treeId, currentJson)
-                require(local.treeUuid == incoming.manifest.treeUuid) {
-                    "Different family trees: import as a separate tree instead"
-                }
                 val known = collectReachable(treeId, local.head).toMutableMap()
                 incoming.commits.forEach { known[it.id] = it }
                 val mineAncestors = ancestors(local.head, known)
@@ -402,7 +473,7 @@ class VersionedTreeStore(private val filesDir: File, private val mediaAccess: Tr
                 val common = mineAncestors.keys.intersect(theirsAncestors.keys)
                     .minWithOrNull(compareBy<String> { mineAncestors.getValue(it) + theirsAncestors.getValue(it) }
                         .thenBy { mineAncestors.getValue(it) })
-                    ?: throw IllegalArgumentException("No common history; cannot merge unrelated revisions")
+                    ?: throw IllegalArgumentException("Different family trees: no common history; cannot merge unrelated revisions")
                 val base = known.getValue(common)
                 val ours = known.getValue(local.head)
                 val theirs = known.getValue(incoming.manifest.head)
@@ -457,10 +528,15 @@ class VersionedTreeStore(private val filesDir: File, private val mediaAccess: Tr
                 require(latestOnDisk == readCommit(treeId, manifest.head).snapshotJson) {
                     "Tree data changed after preview; review merge again"
                 }
-                require(manifest.treeUuid == preview.incoming.manifest.treeUuid) { "Tree identity mismatch" }
                 validateArchive(preview.incoming)
                 val all = collectReachable(treeId, manifest.head).toMutableMap()
                 preview.incoming.commits.forEach { all[it.id] = it }
+                // An archived lineage may use a different UUID; require a real
+                // common, reachable and content-verified commit on both sides.
+                require(preview.commonAncestorId in ancestors(manifest.head, all) &&
+                    preview.commonAncestorId in ancestors(preview.incoming.manifest.head, all)) {
+                    "Tree identity mismatch: no shared ancestor"
+                }
                 val result = GedcomThreeWayMerge.merge(
                     all.getValue(preview.commonAncestorId).snapshotJson,
                     all.getValue(manifest.head).snapshotJson,

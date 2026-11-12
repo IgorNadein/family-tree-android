@@ -56,6 +56,16 @@
         android:text="@string/import_gedcom" />
 
     <Button
+        android:id="@+id/new_recover_orphan"
+        style="@style/AppTheme.NormalButton"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="16dp"
+        android:minWidth="350dp"
+        android:visibility="gone"
+        android:text="@string/ftree_recover_button" />
+
+    <Button
         android:id="@+id/new_import_ftree"
         style="@style/AppTheme.NormalButton"
         android:layout_width="wrap_content"
