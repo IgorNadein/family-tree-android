@@ -273,6 +273,8 @@ object TreeUtil {
             var minId: String? = null
             var minNum = Int.MAX_VALUE
             for (person in gedcom.people) {
+                // UUID-based GEDCOM IDs do not have an ordering or numeric meaning.
+                if (!person.id.matches(Regex("[A-Za-z]+[0-9]+"))) continue
                 val num = U.extractNum(person.id)
                 if (num < minNum) {
                     minNum = num

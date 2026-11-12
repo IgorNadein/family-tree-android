@@ -255,16 +255,9 @@ public class ConfirmationActivity extends BaseActivity {
         startActivity(new Intent(this, TreesActivity.class));
     }
 
-    /**
-     * Returns the highest ID of a certain class taking in count old and new tree.
-     */
+    /** Fresh ID must be unique across the two trees being compared. */
     String maxId(Class aClass) {
-        String id = U.newID(Global.gc, aClass); // New ID against old tree records
-        String id2 = U.newID(Global.gc2, aClass); // and against new tree
-        if (Integer.parseInt(id.substring(1)) > Integer.parseInt(id2.substring(1))) // Removes the initial letter
-            return id;
-        else
-            return id2;
+        return U.newID(Global.gc, aClass, Global.gc2);
     }
 
     /**

@@ -437,7 +437,7 @@ class DiagramFragment : BaseFragment(R.layout.diagram_fragment) {
 
         init {
             val person = personNode.person
-            id = U.extractNum(person.id)
+            id = View.generateViewId() // Android view IDs must not be derived from UUIDs
             LayoutInflater.from(context).inflate(R.layout.diagram_card, this, true)
             val border = findViewById<View>(R.id.card_border)
             val sex = person.sex

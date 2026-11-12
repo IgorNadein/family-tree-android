@@ -526,9 +526,7 @@ class MergeViewModel(state: SavedStateHandle) : ViewModel() {
         }
         newId = record.getExtension(MATCHING) as String?
         if (newId == null) {
-            val nextNum = records.getMax(aClass) + 1
-            newId = records.getPrefix(aClass) + nextNum
-            records.setMax(aClass, nextNum)
+            newId = U.newID(firstGedcom, aClass, secondGedcom)
         }
     }
 

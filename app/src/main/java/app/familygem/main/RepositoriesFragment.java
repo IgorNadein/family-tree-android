@@ -67,7 +67,10 @@ public class RepositoriesFragment extends BaseFragment {
         Collections.sort(repositories, (r1, r2) -> {
             switch (order) {
                 case 1: // Ordina per id
-                    return U.extractNum(r1.getId()) - U.extractNum(r2.getId());
+                    if (r1.getId().matches("[A-Za-z]+[0-9]+") && r2.getId().matches("[A-Za-z]+[0-9]+")) {
+                        return Integer.compare(U.extractNum(r1.getId()), U.extractNum(r2.getId()));
+                    }
+                    return r1.getId().compareTo(r2.getId());
                 case 2: // Ordine alfabetico
                     return r1.getName().compareToIgnoreCase(r2.getName());
                 case 3: // Ordina per numero di fonti
