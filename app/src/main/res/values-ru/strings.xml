@@ -454,4 +454,19 @@
     <string name="ftree_recovered_name">Восстановленное дерево №%1$d</string>
     <string name="ftree_recover_completed">Дерево возвращено в список.</string>
     <string name="ftree_reassigned_ids">Пересекающиеся ID новых записей переназначены: %1$d человек, %2$d семей. Обе ветви и их связи будут сохранены. Проверьте оставшиеся конфликты перед сохранением.</string>
+    <string name="github_update_check">Проверить обновления в GitHub</string>
+    <string name="github_update_checking">Проверка GitHub Releases…</string>
+    <string name="github_update_current">Установлена последняя опубликованная версия.</string>
+    <string name="github_update_available">Доступна версия %1$s.</string>
+    <string name="github_update_dialog_title">Есть обновление</string>
+    <string name="github_update_dialog_body">Скачать версию %1$s из GitHub? Сейчас установлена %2$s. Перед установкой Android запросит подтверждение.</string>
+    <string name="github_update_download">Скачать обновление</string>
+    <string name="github_update_downloading">Загрузка и проверка подписи APK…</string>
+    <string name="github_update_install">Установить скачанное обновление</string>
+    <string name="github_update_ready">APK проверен. Подтверди установку в Android.</string>
+    <string name="github_update_error">Ошибка обновления: %1$s</string>
+    <string name="github_update_allow_install">Разреши установку из приложения, затем ещё раз нажми «Установить скачанное обновление».</string>
+    <string name="github_update_permission_title">Разрешение на установку</string>
+    <string name="github_update_permission_message">Android требует разрешения на установку APK из приложения. Открой настройки, разреши установку, затем вернись и нажми кнопку повторно.</string>
+    <string name="github_update_permission_settings">Открыть настройки</string>
 </resources>

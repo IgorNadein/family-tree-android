@@ -460,4 +460,19 @@
     <string name="ftree_recovered_name">Recovered tree #%1$d</string>
     <string name="ftree_recover_completed">Tree restored to your list.</string>
     <string name="ftree_reassigned_ids">Conflicting new record IDs were safely reassigned: %1$d people and %2$d families. Both sets of records and their references will be preserved. Review remaining conflicts before saving.</string>
+    <string name="github_update_check">Check updates via GitHub</string>
+    <string name="github_update_checking">Checking GitHub Releases…</string>
+    <string name="github_update_current">You have the latest published version.</string>
+    <string name="github_update_available">Version %1$s is available.</string>
+    <string name="github_update_dialog_title">Update available</string>
+    <string name="github_update_dialog_body">Download version %1$s from GitHub? Installed: %2$s. The system will ask before installing.</string>
+    <string name="github_update_download">Download update</string>
+    <string name="github_update_downloading">Downloading and checking the signed APK…</string>
+    <string name="github_update_install">Install downloaded update</string>
+    <string name="github_update_ready">APK verified. Confirm installation in Android.</string>
+    <string name="github_update_error">Could not update: %1$s</string>
+    <string name="github_update_allow_install">Allow installation from this app, then tap Install downloaded update again.</string>
+    <string name="github_update_permission_title">Allow installing updates</string>
+    <string name="github_update_permission_message">Android requires permission to install APKs from this app. Allow it in settings, then return and tap Install downloaded update.</string>
+    <string name="github_update_permission_settings">Open settings</string>
 </resources>

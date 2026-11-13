@@ -6,4 +6,5 @@
     <external-media-path
         name="media"
         path="/" />
+    <cache-path name="verified_updates" path="updates/" />
 </paths>
