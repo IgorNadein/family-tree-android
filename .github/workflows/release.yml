@@ -1,0 +1,81 @@
+name: Signed GitHub release
+
+# A version bump in master automatically publishes the signed APK.
+on:
+  push:
+    branches: [master]
+    paths:
+      - 'app/build.gradle'
+      - '.github/workflows/release.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 50
+    steps:
+      - name: Checkout tagged code
+        uses: actions/checkout@v4
+
+      - name: Setup Java 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - name: Install Android SDK 37.2
+        run: |
+          SDKMANAGER="$(find "$ANDROID_HOME/cmdline-tools" -type f -name sdkmanager | sort -V | tail -1)"
+          test -n "$SDKMANAGER"
+          "$SDKMANAGER" --sdk_root="$ANDROID_HOME" --install "platforms;android-37.2" "build-tools;36.0.0" "platform-tools"
+
+      - name: Setup Gradle caching
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Restore signing key
+        env:
+          SIGNING_KEYSTORE_B64: ${{ secrets.FAMILY_TREE_SIGNING_KEYSTORE_B64 }}
+        run: |
+          test -n "$SIGNING_KEYSTORE_B64"
+          mkdir -p "$HOME/.android"
+          printf '%s' "$SIGNING_KEYSTORE_B64" | base64 --decode > "$HOME/.android/debug.keystore"
+          chmod 600 "$HOME/.android/debug.keystore"
+
+      - name: Test and build consistently signed APK
+        run: ./gradlew :app:testDebugUnitTest :app:assembleDebug --no-daemon --console=plain
+
+      - name: Verify APK version, signature, and checksum
+        shell: bash
+        run: |
+          set -euo pipefail
+          APK="app/build/outputs/apk/debug/app-debug.apk"
+          AAPT="$ANDROID_HOME/build-tools/36.0.0/aapt"
+          APKSIGNER="$ANDROID_HOME/build-tools/36.0.0/apksigner"
+          PACKAGE_INFO="$("$AAPT" dump badging "$APK" | grep '^package:')"
+          echo "$PACKAGE_INFO" | grep -F "name='ru.nadein.familytree'"
+          VERSION="$(printf '%s' "$PACKAGE_INFO" | sed -n "s/.*versionName='\([^']*\)'.*/\1/p")"
+          [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]
+          echo "VERSION=$VERSION" >> "$GITHUB_ENV"
+          "$APKSIGNER" verify "$APK"
+          CERT="$("$APKSIGNER" verify --print-certs "$APK" | sed -n 's/.*Signer #1 certificate SHA-256 digest: //p' | head -1)"
+          test "$CERT" = "8c5825974bf2f11b994afd165b74e9a968ef47a84429f11e72085e99d0910fbc"
+          mkdir release
+          cp "$APK" release/family-tree-android.apk
+          (cd release && sha256sum family-tree-android.apk > family-tree-android.apk.sha256)
+
+      - name: Publish downloadable release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if gh release view "v$VERSION" >/dev/null 2>&1; then
+            echo "Release v$VERSION already exists."
+            exit 0
+          fi
+          gh release create "v$VERSION" \
+            "release/family-tree-android.apk#family-tree-android.apk" \
+            "release/family-tree-android.apk.sha256#family-tree-android.apk.sha256" \
+            --target "$GITHUB_SHA" --generate-notes \
+            --title "Family Tree $VERSION"

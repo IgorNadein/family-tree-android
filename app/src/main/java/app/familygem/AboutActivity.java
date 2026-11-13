@@ -5,6 +5,8 @@ import android.net.Uri;
 import android.os.Bundle;
 import android.view.View;
 import android.widget.TextView;
+import android.widget.Button;
+import app.familygem.update.GitHubUpdateUi;
 import app.familygem.databinding.AboutActivityBinding;
 
 public class AboutActivity extends BaseActivity {
@@ -17,6 +19,9 @@ public class AboutActivity extends BaseActivity {
 
         TextView version = findViewById(R.id.about_version);
         version.setText(getString(R.string.version_name, BuildConfig.VERSION_NAME));
+        Button updateButton = findViewById(R.id.github_update_check);
+        TextView updateStatus = findViewById(R.id.github_update_status);
+        updateButton.setOnClickListener(view -> GitHubUpdateUi.check(this, updateButton, updateStatus));
 
         TextView webSite = findViewById(R.id.about_link);
         if (Global.settings.premium)
