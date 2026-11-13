@@ -469,4 +469,19 @@
     <string name="github_update_permission_title">Разрешение на установку</string>
     <string name="github_update_permission_message">Android требует разрешения на установку APK из приложения. Открой настройки, разреши установку, затем вернись и нажми кнопку повторно.</string>
     <string name="github_update_permission_settings">Открыть настройки</string>
+    <string name="person_merge_menu">Объединить с другим человеком</string>
+    <string name="person_merge_select_title">Выбери вторую карточку</string>
+    <string name="person_merge_search">Поиск по имени, году или ID</string>
+    <string name="person_merge_confirm_title">Проверка объединения</string>
+    <string name="person_merge_preview">Оставить: %1$s\nПеренести и удалить карточку: %2$s\n\nДобавится: имён — %3$d, событий — %4$d, медиа — %5$d, заметок — %6$d, ссылок на источники — %7$d.\n\nСвязи будут обновлены в %8$d семьях. Остальные данные сохранятся в основной карточке. Подтверждай только если это действительно ОДИН человек.\n\nПредыдущая версия сохранится в истории.</string>
+    <string name="person_merge_do">Объединить людей</string>
+    <string name="person_merge_blocked">Небезопасное объединение</string>
+    <string name="person_merge_root_blocked">Вторая карточка выбрана корнем дерева. Открой её как основную и объедини с ней другую, чтобы сохранить ID корня.</string>
+    <string name="person_merge_birth_warning">Разные записи о рождении сохранятся обе — проверь их после объединения.</string>
+    <string name="person_merge_death_warning">Разные записи о смерти сохранятся обе — проверь их после объединения.</string>
+    <string name="person_merge_completed">Люди объединены. Прежняя версия сохранена в истории.</string>
+    <string name="ftree_restore_button">Восстановить версию</string>
+    <string name="ftree_restore_confirm">Восстановить эту прежнюю версию? Новые коммиты останутся в истории, а восстановление создаст отдельный коммит.</string>
+    <string name="ftree_restore_done">Дерево восстановлено новым коммитом истории.</string>
+    <string name="person_merge_profile_details">Рождение: %1$s · место: %2$s\nСмерть: %3$s\nСемей с родителями: %4$d · с супругами: %5$d</string>
 </resources>

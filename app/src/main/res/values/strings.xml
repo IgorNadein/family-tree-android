@@ -475,4 +475,19 @@
     <string name="github_update_permission_title">Allow installing updates</string>
     <string name="github_update_permission_message">Android requires permission to install APKs from this app. Allow it in settings, then return and tap Install downloaded update.</string>
     <string name="github_update_permission_settings">Open settings</string>
+    <string name="person_merge_menu">Merge with another person</string>
+    <string name="person_merge_select_title">Select duplicate person</string>
+    <string name="person_merge_search">Search by name, year or ID</string>
+    <string name="person_merge_confirm_title">Review person merge</string>
+    <string name="person_merge_preview">Keep: %1$s\nRemove after merging: %2$s\n\nAdd %3$d names, %4$d events, %5$d media, %6$d notes and %7$d source citations.\n\nUpdate %8$d families and their references. Other information stays in the primary record. Confirm only if these are truly the SAME person.\n\nThe previous version remains in tree history.</string>
+    <string name="person_merge_do">Merge people</string>
+    <string name="person_merge_blocked">Cannot safely merge</string>
+    <string name="person_merge_root_blocked">The second person is currently selected as a tree root. Open that person as the primary card instead, so the root ID stays unchanged.</string>
+    <string name="person_merge_birth_warning">Different birth records will both be preserved; check them later.</string>
+    <string name="person_merge_death_warning">Different death records will both be preserved; check them later.</string>
+    <string name="person_merge_completed">People merged. Previous version is preserved in History.</string>
+    <string name="ftree_restore_button">Restore a version</string>
+    <string name="ftree_restore_confirm">Restore this earlier version? All newer commits remain in History. A new restoration commit will be added.</string>
+    <string name="ftree_restore_done">Tree restored. A new history commit was created.</string>
+    <string name="person_merge_profile_details">Birth: %1$s · place: %2$s\nDeath: %3$s\nFamilies as child: %4$d · as spouse: %5$d</string>
 </resources>
