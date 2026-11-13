@@ -125,17 +125,79 @@ object VersionedTreeUi {
             }
             result.onSuccess { commits ->
                 val date = DateFormat.getDateTimeInstance(DateFormat.MEDIUM, DateFormat.SHORT)
-                val message = if (commits.isEmpty()) activity.getString(R.string.ftree_history_empty)
-                    else commits.take(50).mapIndexed { index, commit ->
-                        "${index + 1}. ${date.format(Date(commit.createdAtMillis))}\n${commit.id.take(10)} · ${commit.parents.size} parent(s)"
-                    }.joinToString("\n\n")
+                if (commits.isEmpty()) {
+                    AlertDialog.Builder(activity)
+                        .setTitle(R.string.ftree_history_title)
+                        .setMessage(R.string.ftree_history_empty)
+                        .setPositiveButton(android.R.string.ok, null).show()
+                    return@onSuccess
+                }
+                val recent = commits.take(50)
+                val labels = recent.mapIndexed { index, commit ->
+                    (index + 1).toString() + ". " +
+                        date.format(Date(commit.createdAtMillis)) + " · " +
+                        commit.id.take(12) + " · " + commit.parents.size + " parent(s)"
+                }
                 AlertDialog.Builder(activity)
                     .setTitle(R.string.ftree_history_title)
-                    .setMessage(message)
-                    .setPositiveButton(android.R.string.ok, null)
+                    .setItems(labels.toTypedArray()) { _, index ->
+                        confirmRestoreRevision(activity, treeId, recent[index])
+                    }
+                    .setNegativeButton(R.string.cancel, null)
                     .show()
             }.onFailure { showError(activity, it) }
         }
+    }
+
+    private fun confirmRestoreRevision(activity: AppCompatActivity, treeId: Int, commit: SnapshotCommit) {
+        if (Global.settings.openTree == treeId && Global.shouldSave) {
+            Toast.makeText(activity, R.string.ftree_save_first, Toast.LENGTH_LONG).show()
+            return
+        }
+        AlertDialog.Builder(activity)
+            .setTitle(R.string.ftree_restore_button)
+            .setMessage(activity.getString(R.string.ftree_restore_confirm) +
+                "\n\n" + commit.id.take(16))
+            .setNegativeButton(R.string.cancel, null)
+            .setPositiveButton(R.string.ftree_restore_button) { _, _ ->
+                activity.lifecycleScope.launch {
+                    val outcome = runCatching {
+                        withContext(Dispatchers.IO) {
+                            val store = VersionedTreeStore(
+                                activity.filesDir, AndroidTreeMediaAccess(activity))
+                            val restored = store.restoreRevision(treeId, commit.id)
+                            val parsed = org.folg.gedcom.parser.JsonParser()
+                                .fromJson(File(activity.filesDir, treeId.toString() + ".json").readText())
+                                .apply { createIndexes() }
+                            Pair(restored, parsed)
+                        }
+                    }
+                    outcome.onSuccess { (restored, parsed) ->
+                        if (restored) {
+                            val tree = Global.settings.getTree(treeId)
+                            if (tree.root != null && parsed.getPerson(tree.root) == null) {
+                                tree.root = null
+                            }
+                            if (tree.shareRoot != null && parsed.getPerson(tree.shareRoot) == null) {
+                                tree.shareRoot = null
+                            }
+                            TreeUtil.refreshData(parsed, tree)
+                            if (Global.settings.openTree == treeId) {
+                                Global.gc = parsed
+                                Global.indi = tree.root
+                                Global.edited = true
+                                Global.shouldSave = false
+                                app.familygem.Memory.clear()
+                            }
+                        }
+                        Toast.makeText(activity,
+                            if (restored) R.string.ftree_restore_done else R.string.ftree_no_changes,
+                            Toast.LENGTH_LONG).show()
+                        activity.recreate()
+                    }.onFailure { showError(activity, it) }
+                }
+            }
+            .show()
     }
 
     fun importAsNew(activity: AppCompatActivity, archive: VersionedTreeArchive, onComplete: () -> Unit) {

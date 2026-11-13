@@ -712,6 +712,34 @@ class VersionedTreeStore(private val filesDir: File, private val mediaAccess: Tr
         }
     }
 
+    /**
+     * Restore is itself a new commit, like Git revert. The old commit and every
+     * later revision remain reachable, and original attachments are checked out.
+     */
+    suspend fun restoreRevision(treeId: Int, revisionId: String): Boolean =
+        withContext(Dispatchers.IO) {
+            lock.withLock {
+                val manifest = readManifest(treeId)
+                    ?: throw IllegalArgumentException("No version history for this tree")
+                val known = collectReachable(treeId, manifest.head)
+                val selected = known[revisionId]
+                    ?: throw IllegalArgumentException("Revision not reachable from current history")
+                val current = known.getValue(manifest.head)
+                if (current.id == selected.id) return@withLock false
+                require(treeFile(treeId).readText(Charsets.UTF_8) == current.snapshotJson) {
+                    "Save or reload the current tree before restoring a revision"
+                }
+                validateGedcom(selected.snapshotJson)
+                val newHead = commit(listOf(current.id), selected.snapshotJson, selected.media.orEmpty())
+                writeCommit(treeId, newHead)
+                checkout(treeId, selected.media.orEmpty(), current.media.orEmpty())
+                writeAtomic(treeFile(treeId), selected.snapshotJson)
+                writeAtomic(manifestFile(treeId),
+                    gson.toJson(manifest.copy(formatVersion = 2, head = newHead.id)))
+                true
+            }
+        }
+
     suspend fun deleteHistory(treeId: Int) = withContext(Dispatchers.IO) {
         lock.withLock { directory(treeId).deleteRecursively() }
     }

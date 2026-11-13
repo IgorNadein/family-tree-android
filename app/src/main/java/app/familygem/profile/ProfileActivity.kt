@@ -43,6 +43,7 @@ import app.familygem.detail.MediaActivity
 import app.familygem.detail.NameActivity
 import app.familygem.detail.NoteActivity
 import app.familygem.main.MainActivity
+import app.familygem.people.PersonMergeUi
 import app.familygem.util.FamilyUtil
 import app.familygem.util.FileUtil
 import app.familygem.util.InsetsUtil
@@ -489,6 +490,8 @@ class ProfileActivity : AppCompatActivity() {
         if (Global.settings.currentTree.root == null || Global.settings.currentTree.root != person?.id)
             menu.add(0, 3, 0, R.string.make_root)
         menu.add(0, 4, 0, R.string.modify)
+        if (Global.gc.people.size > 1)
+            menu.add(0, 6, 0, R.string.person_merge_menu)
         menu.add(0, 5, 0, R.string.delete)
         return true
     }
@@ -510,6 +513,7 @@ class ProfileActivity : AppCompatActivity() {
                 intent.putExtra(Extra.PERSON_ID, person?.id)
                 startActivity(intent)
             }
+            6 -> PersonMergeUi.choose(this, person!!.id) // Confirmed same-person merge
             5 -> { // Delete
                 Util.confirmDelete(this) {
                     val families = person!!.delete()
