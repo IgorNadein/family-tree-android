@@ -43,6 +43,8 @@ jobs:
           mkdir -p "$HOME/.android"
           printf '%s' "$SIGNING_KEYSTORE_B64" | base64 --decode > "$HOME/.android/debug.keystore"
           chmod 600 "$HOME/.android/debug.keystore"
+          # AGP/CI may use a separate Android home. Bind the signer explicitly.
+          printf 'keyAlias=androiddebugkey\nkeyPassword=android\nstoreFile=%s/.android/debug.keystore\nstorePassword=android\n' "$HOME" > credential.properties
 
       - name: Test and build consistently signed APK
         run: ./gradlew :app:testDebugUnitTest :app:assembleDebug --no-daemon --console=plain
@@ -61,6 +63,7 @@ jobs:
           echo "VERSION=$VERSION" >> "$GITHUB_ENV"
           "$APKSIGNER" verify "$APK"
           CERT="$("$APKSIGNER" verify --print-certs "$APK" | sed -n 's/.*Signer #1 certificate SHA-256 digest: //p' | head -1)"
+          echo "Verified APK signer: $CERT"
           test "$CERT" = "8c5825974bf2f11b994afd165b74e9a968ef47a84429f11e72085e99d0910fbc"
           mkdir release
           cp "$APK" release/family-tree-android.apk
